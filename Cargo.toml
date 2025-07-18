@@ -1,26 +1,42 @@
 [package]
-name = "vu128"
-version = "1.1.0"
-authors = ["John Millikin <john@john-millikin.com>"]
-edition = "2018"
-description = "Efficient variable-length integers"
-readme = "README.md"
-repository = "https://github.com/jmillikin/rust-vu128"
-license = "0BSD"
-
-categories = [
-	"encoding",
-	"no-std",
-]
-
-include = [
-	"/LICENSE.txt",
-	"/vu128/*.rs",
-]
+name = "vlen"
+version = "0.1.0"
+edition = "2021"
+authors = ["Harrison Chin <git@harry.aleeas.com>"]
+description = "High-performance variable-length integer encoding with SIMD optimizations, embedded support, and enhanced functionality"
+license = "MIT"
+repository = "https://github.com/harrychin/vlen"
+keywords = ["encoding", "integer", "varint", "no-std", "simd"]
+categories = ["encoding", "compression"]
 
 [lib]
-path = "vu128/vu128.rs"
+name = "vlen"
+path = "vlen/mod.rs"
 
-[[test]]
-name = "vu128_test"
-path = "vu128/vu128_test.rs"
+[[bench]]
+name = "encode_decode"
+harness = false
+
+[[bench]]
+name = "leb128_comparison"
+harness = false
+
+[[bench]]
+name = "simd_benchmarks"
+harness = false
+
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.6"
+integer-encoding = "4.0"
+arbtest = "0.3"
+rstest = "0.25"
+
+[features]
+default = []
+alloc = []
+
+[package.metadata.docs.rs]
+all-features = true
