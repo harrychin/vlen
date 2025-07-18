@@ -62,6 +62,13 @@ MSB ------------------------------------ LSB
 - **Zero-copy operations** where possible
 - **Minimal allocation overhead** with optional `alloc` feature
 
+## Features
+
+- **`alloc`**: Enables allocation-dependent functionality (default: disabled)
+- **`serde`**: Enables serde integration for serialization/deserialization (default: disabled)
+- **`simd`**: Enables SIMD optimizations for bulk encoding/decoding (default: disabled)
+- **`full`**: Enables all features (`alloc`, `serde`, `simd`)
+
 ## Platform Support
 
 - **High-performance systems**: Full SIMD optimizations for x86_64 and aarch64
@@ -70,6 +77,8 @@ MSB ------------------------------------ LSB
 - **No-std support**: Can be used in `no_std` environments with the `alloc` feature
 
 ## Usage
+
+### Basic Encoding/Decoding
 
 ```rust
 use vlen::{encode, decode, encoded_size};
@@ -84,6 +93,75 @@ let (decoded_value, decoded_len) = decode::<u64>(&buf)?;
 
 // Calculate encoded size without encoding
 let size = encoded_size(value)?;
+```
+
+### Serde Integration
+
+With the `serde` feature enabled, you can use vlen encoding with serde-based serialization formats:
+
+```rust
+use serde::{Serialize, Deserialize};
+use vlen::serde::{VlenU32, VlenI64, VlenF64};
+
+#[derive(Serialize, Deserialize)]
+struct MyStruct {
+    id: VlenU32,
+    timestamp: VlenI64,
+    score: VlenF64,
+}
+
+let data = MyStruct {
+    id: VlenU32(12345),
+    timestamp: VlenI64(-1234567890),
+    score: VlenF64(3.14159),
+};
+
+// Serialize to JSON (or any other serde format)
+let json = serde_json::to_string(&data).unwrap();
+let deserialized: MyStruct = serde_json::from_str(&json).unwrap();
+
+assert_eq!(data.id.0, deserialized.id.0);
+assert_eq!(data.timestamp.0, deserialized.timestamp.0);
+assert_eq!(data.score.0, deserialized.score.0);
+```
+
+### SIMD Optimizations
+
+With the `simd` feature enabled, you can use high-performance bulk encoding and decoding operations:
+
+```rust
+use vlen::{bulk_encode_u32_safe, bulk_decode_u32_safe};
+
+let values = [1u32, 1000, 1000000, 1000000000];
+let mut buf = [0u8; 20];
+
+// Bulk encode multiple values
+let encoded_len = bulk_encode_u32_safe(&mut buf, &values)?;
+
+// Bulk decode multiple values
+let mut decoded_values = [0u32; 4];
+let decoded_len = bulk_decode_u32_safe(&buf[..encoded_len], &mut decoded_values)?;
+
+assert_eq!(values, decoded_values);
+```
+
+The SIMD optimizations are automatically selected based on your target architecture:
+
+- **x86_64**: Uses SSE2 instructions for optimal performance
+- **aarch64**: Uses ARM NEON instructions for optimal performance
+- **Other architectures**: Falls back to efficient scalar implementations
+
+The serde wrapper types provide easy access to their inner values through `Deref` and `DerefMut`:
+
+```rust
+use vlen::serde::VlenU32;
+
+let mut val = VlenU32(42);
+assert_eq!(*val, 42);
+
+*val = 100;
+assert_eq!(*val, 100);
+assert_eq!(val.0, 100);
 ```
 
 ## Handling of over-long encodings

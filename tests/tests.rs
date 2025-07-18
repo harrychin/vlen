@@ -509,6 +509,7 @@ fn test_overlong_encodings() {
 }
 
 #[test]
+#[cfg(feature = "simd")]
 fn test_bulk_decode_u32() {
 	let mut buf = [0u8; 20];
 	let values = [1u32, 1000, 1000000, 1000000000];
@@ -522,6 +523,7 @@ fn test_bulk_decode_u32() {
 }
 
 #[test]
+#[cfg(feature = "simd")]
 fn test_bulk_decode_u32_mixed() {
 	let mut buf = [0u8; 20];
 	let values = [1u32, 1000, 1000000, 1000000000];
@@ -605,6 +607,7 @@ fn test_buffer_size_errors() {
 }
 
 #[test]
+#[cfg(feature = "simd")]
 fn test_safe_bulk_operations() {
 	let values = [1u32, 1000, 1000000, 1000000000];
 	let mut buf = [0u8; 20];
@@ -618,6 +621,7 @@ fn test_safe_bulk_operations() {
 }
 
 #[test]
+#[cfg(feature = "simd")]
 fn test_safe_bulk_buffer_too_small() {
 	let values = [1u32, 1000, 1000000, 1000000000];
 	let mut buf = [0u8; 5];

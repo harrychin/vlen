@@ -160,15 +160,54 @@ size_bounds_test!(test_u128_size_bounds, u128, encode_u128, 17, 17);
 signed_size_bounds_test!(test_i128_size_bounds, i128, encode_i128, 17, 17);
 
 // Generate all encoded size consistency tests
-encoded_size_consistency_test!(test_u16_encoded_size_consistency, u16, encode_u16, encoded_size_u16, 3);
-encoded_size_consistency_test!(test_u32_encoded_size_consistency, u32, encode_u32, encoded_size_u32, 5);
-encoded_size_consistency_test!(test_u64_encoded_size_consistency, u64, encode_u64, encoded_size_u64, 9);
-encoded_size_consistency_test!(test_u128_encoded_size_consistency, u128, encode_u128, encoded_size_u128, 17);
+encoded_size_consistency_test!(
+	test_u16_encoded_size_consistency,
+	u16,
+	encode_u16,
+	encoded_size_u16,
+	3
+);
+encoded_size_consistency_test!(
+	test_u32_encoded_size_consistency,
+	u32,
+	encode_u32,
+	encoded_size_u32,
+	5
+);
+encoded_size_consistency_test!(
+	test_u64_encoded_size_consistency,
+	u64,
+	encode_u64,
+	encoded_size_u64,
+	9
+);
+encoded_size_consistency_test!(
+	test_u128_encoded_size_consistency,
+	u128,
+	encode_u128,
+	encoded_size_u128,
+	17
+);
 
 // Generate all compression efficiency tests
-compression_efficiency_test!(test_compression_efficiency_u32, u32, encode_u32, 5);
-compression_efficiency_test!(test_compression_efficiency_u64, u64, encode_u64, 9);
-signed_compression_efficiency_test!(test_i128_compression_efficiency, i128, encode_i128, 17);
+compression_efficiency_test!(
+	test_compression_efficiency_u32,
+	u32,
+	encode_u32,
+	5
+);
+compression_efficiency_test!(
+	test_compression_efficiency_u64,
+	u64,
+	encode_u64,
+	9
+);
+signed_compression_efficiency_test!(
+	test_i128_compression_efficiency,
+	i128,
+	encode_i128,
+	17
+);
 
 // Specialized tests
 #[test]
@@ -190,7 +229,8 @@ fn test_little_endian_encoding() {
 		let mut buf = [0u8; 5];
 		let encoded_len = encode_u32(&mut buf, value);
 		if encoded_len == 5 {
-			let stored_value = u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]);
+			let stored_value =
+				u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]);
 			assert_eq!(value, stored_value);
 		}
 		Ok(())
@@ -231,7 +271,11 @@ fn test_signed_integer_sign_preservation() {
 #[test]
 fn test_floating_point_infinity_handling() {
 	arbtest(|u| {
-		let value = if u.arbitrary::<bool>()? { f32::INFINITY } else { f32::NEG_INFINITY };
+		let value = if u.arbitrary::<bool>()? {
+			f32::INFINITY
+		} else {
+			f32::NEG_INFINITY
+		};
 		let mut buf = [0u8; 5];
 		let encoded_len = encode_f32(&mut buf, value);
 		let (decoded_value, decoded_len) = decode_f32(&buf);
@@ -280,7 +324,8 @@ fn test_bulk_encode_decode_round_trip() {
 		let mut decode_buf = [0u8; 25];
 		decode_buf[..encoded_len].copy_from_slice(&buf[..encoded_len]);
 		let mut decoded_values = vec![0u32; values.len()];
-		let decoded_len = bulk_decode(&decode_buf, &mut decoded_values).unwrap();
+		let decoded_len =
+			bulk_decode(&decode_buf, &mut decoded_values).unwrap();
 		assert_eq!(values, decoded_values);
 		assert_eq!(encoded_len, decoded_len);
 		Ok(())
@@ -302,7 +347,8 @@ fn test_bulk_encode_decode_mixed_types() {
 		let mut decode_buf = [0u8; 15];
 		decode_buf[..encoded_len].copy_from_slice(&buf[..encoded_len]);
 		let mut decoded_values = vec![0u32; u32_values.len()];
-		let decoded_len = bulk_decode(&decode_buf, &mut decoded_values).unwrap();
+		let decoded_len =
+			bulk_decode(&decode_buf, &mut decoded_values).unwrap();
 		assert_eq!(u32_values, decoded_values);
 		assert_eq!(encoded_len, decoded_len);
 
@@ -311,7 +357,8 @@ fn test_bulk_encode_decode_mixed_types() {
 		let mut decode_buf = [0u8; 15];
 		decode_buf[..encoded_len].copy_from_slice(&buf[..encoded_len]);
 		let mut decoded_values = vec![0i32; i32_values.len()];
-		let decoded_len = bulk_decode(&decode_buf, &mut decoded_values).unwrap();
+		let decoded_len =
+			bulk_decode(&decode_buf, &mut decoded_values).unwrap();
 		assert_eq!(i32_values, decoded_values);
 		assert_eq!(encoded_len, decoded_len);
 		Ok(())
@@ -361,7 +408,8 @@ fn test_edge_case_values() {
 		assert_eq!(max_u32, decoded_value);
 		assert_eq!(encoded_len, 5);
 
-		let boundary_values = [127u32, 128u32, 16383u32, 16384u32, 2097151u32, 2097152u32];
+		let boundary_values =
+			[127u32, 128u32, 16383u32, 16384u32, 2097151u32, 2097152u32];
 		for &value in &boundary_values {
 			let _encoded_len = encode_u32(&mut buf, value);
 			let (decoded_value, _) = decode_u32(&buf);
@@ -412,7 +460,8 @@ fn test_truncated_data_handling() {
 
 		if encoded_len > 1 {
 			let mut truncated_buf = [0u8; 5];
-			truncated_buf[..encoded_len - 1].copy_from_slice(&buf[..encoded_len - 1]);
+			truncated_buf[..encoded_len - 1]
+				.copy_from_slice(&buf[..encoded_len - 1]);
 			let _result = decode_u32(&truncated_buf);
 		}
 		Ok(())
@@ -420,6 +469,7 @@ fn test_truncated_data_handling() {
 }
 
 #[test]
+#[cfg(feature = "simd")]
 fn test_simd_bulk_operations_when_available() {
 	arbtest(|u| {
 		let values: Vec<u32> = (0..u.arbitrary::<u8>()? as usize % 10 + 1)
@@ -429,13 +479,15 @@ fn test_simd_bulk_operations_when_available() {
 		let encoded_len = bulk_encode_u32_safe(&mut buf, &values).unwrap();
 		buf.truncate(encoded_len);
 		let mut decoded_values = vec![0u32; values.len()];
-		let _decoded_len = bulk_decode_u32_safe(&buf, &mut decoded_values).unwrap();
+		let _decoded_len =
+			bulk_decode_u32_safe(&buf, &mut decoded_values).unwrap();
 		assert_eq!(values.len(), decoded_values.len());
 		Ok(())
 	});
 }
 
 #[test]
+#[cfg(feature = "simd")]
 fn test_simd_buffer_size_validation() {
 	arbtest(|u| {
 		let values: Vec<u32> = (0..u.arbitrary::<u8>()? as usize % 10 + 1)

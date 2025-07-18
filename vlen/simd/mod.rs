@@ -199,6 +199,7 @@ pub fn bulk_decode_u32_safe(
 }
 
 #[cfg(test)]
+#[cfg(feature = "simd")]
 mod tests {
 	use super::*;
 

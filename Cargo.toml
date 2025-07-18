@@ -1,6 +1,6 @@
 [package]
 name = "vlen"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Harrison Chin <git@harry.aleeas.com>"]
 description = "High-performance variable-length integer encoding with SIMD optimizations, embedded support, and enhanced functionality"
@@ -27,16 +27,22 @@ harness = false
 
 
 [dependencies]
+serde = { version = "1.0", optional = true }
+base64 = { version = "0.21", optional = true }
 
 [dev-dependencies]
 criterion = "0.6"
 integer-encoding = "4.0"
 arbtest = "0.3"
 rstest = "0.25"
+serde_json = "1.0"
 
 [features]
 default = []
 alloc = []
+serde = ["dep:serde", "dep:base64"]
+simd = []
+full = ["alloc", "serde", "simd"]
 
 [package.metadata.docs.rs]
 all-features = true

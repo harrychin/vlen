@@ -36,6 +36,9 @@ extern crate alloc;
 pub mod decode;
 pub mod encode;
 mod helpers;
+#[cfg(feature = "serde")]
+pub mod serde;
+#[cfg(feature = "simd")]
 pub mod simd;
 
 // Export specific functions from decode module
@@ -79,10 +82,14 @@ pub use encode::{
 };
 
 // Export SIMD-specific functions with unique names to avoid conflicts
+#[cfg(feature = "simd")]
 pub use simd::{bulk_decode_u32_safe, bulk_encode_u32_safe};
 
 // Re-export the unsafe SIMD functions with unique names
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(all(
+	feature = "simd",
+	any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub use simd::{bulk_decode_u32, bulk_encode_u32};
 
 /// Convenience function to encode a value into a newly allocated buffer.
