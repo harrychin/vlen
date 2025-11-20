@@ -193,7 +193,9 @@ encoding] for signed integers and reverse-endian layout for floating-point.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
+Licensed under **MPL-2.0** to guarantee future openness - see [LICENSE](LICENSE).
+
+Retains `vu128` (ISC/0BSD) attribution in [LICENSE-VU128.txt](LICENSE-VU128.txt).
 
 ## Acknowledgments
 
