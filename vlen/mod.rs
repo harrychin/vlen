@@ -99,14 +99,7 @@ pub fn encode_to_vec<T>(value: T) -> Result<alloc::vec::Vec<u8>, &'static str>
 where
 	T: encode::Encode + Copy,
 {
-	// Use a buffer large enough for the maximum possible encoded size
-	let max_size = match core::any::type_name::<T>() {
-		"u16" | "i16" => 3,
-		"u32" | "i32" | "f32" => 5,
-		"u64" | "i64" | "f64" => 9,
-		"u128" | "i128" => 17,
-		_ => return Err("unsupported type for encode_to_vec"),
-	};
+	let max_size = T::MAX_ENCODED_SIZE;
 	let mut buf = alloc::vec![0u8; max_size];
 	let encoded_len = T::encode(&mut buf, value)?;
 	buf.truncate(encoded_len);
@@ -118,23 +111,7 @@ pub fn decode_value<T>(buf: &[u8]) -> Result<T, &'static str>
 where
 	T: decode::Decode,
 {
-	// Create a buffer that's large enough for the maximum possible decode size
-	let max_size = match core::any::type_name::<T>() {
-		"u16" | "i16" => 3,
-		"u32" | "i32" | "f32" => 5,
-		"u64" | "i64" | "f64" => 9,
-		"u128" | "i128" => 17,
-		_ => return Err("unsupported type for decode_value"),
-	};
-
-	if buf.len() > max_size {
-		return Err("buffer too large for decode_value");
-	}
-
-	let mut decode_buf = [0u8; 17]; // Use the largest possible size
-	decode_buf[..buf.len()].copy_from_slice(buf);
-
-	let (value, _) = T::decode(&decode_buf[..max_size])?;
+	let (value, _) = T::decode(buf)?;
 	Ok(value)
 }
 
@@ -147,14 +124,7 @@ pub fn bulk_encode_to_vec<T>(
 where
 	T: encode::Encode + Copy,
 {
-	// Use a buffer large enough for the maximum possible encoded size
-	let max_size_per_value = match core::any::type_name::<T>() {
-		"u16" | "i16" => 3,
-		"u32" | "i32" | "f32" => 5,
-		"u64" | "i64" | "f64" => 9,
-		"u128" | "i128" => 17,
-		_ => return Err("unsupported type for bulk_encode_to_vec"),
-	};
+	let max_size_per_value = T::MAX_ENCODED_SIZE;
 	let mut buf = alloc::vec![0u8; values.len() * max_size_per_value];
 	let encoded_len = bulk_encode(&mut buf, values)?;
 	buf.truncate(encoded_len);
@@ -170,25 +140,13 @@ pub fn bulk_decode_values<T>(
 where
 	T: decode::Decode,
 {
-	// Create a buffer that's large enough for the maximum possible decode size
-	let max_size = match core::any::type_name::<T>() {
-		"u16" | "i16" => 3,
-		"u32" | "i32" | "f32" => 5,
-		"u64" | "i64" | "f64" => 9,
-		"u128" | "i128" => 17,
-		_ => return Err("unsupported type for bulk_decode_values"),
-	};
-
-	let mut values = alloc::vec::Vec::new();
+	// Estimate capacity: assume average encoding is half of max size
+	let estimated_count = buf.len() / (T::MAX_ENCODED_SIZE / 2).max(1);
+	let mut values = alloc::vec::Vec::with_capacity(estimated_count);
 	let mut offset = 0;
 
 	while offset < buf.len() {
-		// Create a temporary buffer for this value
-		let mut temp_buf = [0u8; 17]; // Use the largest possible size
-		let copy_len = core::cmp::min(max_size, buf.len() - offset);
-		temp_buf[..copy_len].copy_from_slice(&buf[offset..offset + copy_len]);
-
-		let (value, len) = T::decode(&temp_buf[..max_size])?;
+		let (value, len) = T::decode(&buf[offset..])?;
 		values.push(value);
 		offset += len;
 	}

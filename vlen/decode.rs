@@ -205,6 +205,9 @@ where
 pub trait Decode: Sized {
 	/// Decodes the value from the provided buffer.
 	fn decode(buf: &[u8]) -> Result<(Self, usize), &'static str>;
+
+	/// The maximum possible encoded size for this type.
+	const MAX_ENCODED_SIZE: usize;
 }
 
 /// Macro to generate Decode implementation for unsigned integers
@@ -224,6 +227,8 @@ macro_rules! impl_decode_unsigned {
 					unsafe { &*(buf.as_ptr() as *const [u8; $buf_size]) };
 				Ok($decode_fn(buf_array))
 			}
+
+			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }
@@ -245,6 +250,8 @@ macro_rules! impl_decode_signed {
 					unsafe { &*(buf.as_ptr() as *const [u8; $buf_size]) };
 				Ok($decode_fn(buf_array))
 			}
+
+			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }
@@ -266,6 +273,8 @@ macro_rules! impl_decode_float {
 					unsafe { &*(buf.as_ptr() as *const [u8; $buf_size]) };
 				Ok($decode_fn(buf_array))
 			}
+
+			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }

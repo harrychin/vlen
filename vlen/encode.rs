@@ -260,6 +260,9 @@ pub trait Encode: Sized {
 
 	/// Calculates the encoded size of the value without encoding it.
 	fn encoded_size(value: Self) -> Result<usize, &'static str>;
+
+	/// The maximum possible encoded size for this type.
+	const MAX_ENCODED_SIZE: usize;
 }
 
 /// Macro to generate Encode implementation for unsigned integers
@@ -287,6 +290,8 @@ macro_rules! impl_encode_unsigned {
 			fn encoded_size(value: Self) -> Result<usize, &'static str> {
 				Ok($size_fn(value))
 			}
+
+			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }
@@ -321,6 +326,8 @@ macro_rules! impl_encode_signed {
 					((value >> ZIGZAG_SHIFT) as $cast_ty) ^ ((value << 1) as $cast_ty);
 				Ok($size_fn(zigzag))
 			}
+
+			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }
@@ -350,6 +357,8 @@ macro_rules! impl_encode_float {
 			fn encoded_size(value: Self) -> Result<usize, &'static str> {
 				Ok($size_fn(value.to_bits().swap_bytes()))
 			}
+
+			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }
