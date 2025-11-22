@@ -484,6 +484,29 @@ fn test_decode_i128(
 }
 
 #[test]
+fn test_large_i128() {
+	let mut buf = [0u8; 17];
+	// A value that requires more than 64 bits
+	// 2^100
+	let value: i128 = 1 << 100; 
+	let len = vlen::encode_i128(&mut buf, value);
+	let (decoded, decoded_len) = vlen::decode_i128(&buf);
+	assert_eq!(value, decoded, "Failed to round-trip large i128");
+	assert_eq!(len, decoded_len, "Length mismatch");
+
+	// A negative value that requires more than 64 bits
+	let value: i128 = -(1 << 100);
+	let len = vlen::encode_i128(&mut buf, value);
+	let (decoded, decoded_len) = vlen::decode_i128(&buf);
+	assert_eq!(value, decoded, "Failed to round-trip large negative i128");
+	assert_eq!(len, decoded_len, "Length mismatch");
+
+	// Check encoded_size consistency
+	let size = vlen::encoded_size(value).unwrap();
+	assert_eq!(size, len, "encoded_size mismatch for large negative i128");
+}
+
+#[test]
 fn test_overlong_encodings_u16() {
 	let mut buf = [0u8; 3];
 	// Test over-long encoding for u16

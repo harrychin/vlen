@@ -189,6 +189,48 @@ encoded_size_consistency_test!(
 	17
 );
 
+// Helper macro for signed encoded size consistency tests
+macro_rules! signed_encoded_size_consistency_test {
+	($name:ident, $type:ty, $encode_fn:ident, $buf_size:expr) => {
+		#[test]
+		fn $name() {
+			arbtest(|u| {
+				let value = u.arbitrary::<$type>()?;
+				let mut buf = [0u8; $buf_size];
+				let actual_len = $encode_fn(&mut buf, value);
+				let calculated_size = encoded_size(value).unwrap();
+				assert_eq!(actual_len, calculated_size);
+				Ok(())
+			});
+		}
+	};
+}
+
+signed_encoded_size_consistency_test!(
+	test_i16_encoded_size_consistency,
+	i16,
+	encode_i16,
+	3
+);
+signed_encoded_size_consistency_test!(
+	test_i32_encoded_size_consistency,
+	i32,
+	encode_i32,
+	5
+);
+signed_encoded_size_consistency_test!(
+	test_i64_encoded_size_consistency,
+	i64,
+	encode_i64,
+	9
+);
+signed_encoded_size_consistency_test!(
+	test_i128_encoded_size_consistency,
+	i128,
+	encode_i128,
+	17
+);
+
 // Generate all compression efficiency tests
 compression_efficiency_test!(
 	test_compression_efficiency_u32,

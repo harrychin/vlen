@@ -317,9 +317,9 @@ macro_rules! impl_encode_signed {
 				// For signed integers, we need to convert to unsigned for size calculation
 				const ZIGZAG_SHIFT: u8 =
 					(core::mem::size_of::<$t>() * 8 - 1) as u8;
-				let zigzag =
-					((value >> ZIGZAG_SHIFT) as u64) ^ ((value << 1) as u64);
-				Ok($size_fn(zigzag as $cast_ty))
+				let zigzag: $cast_ty =
+					((value >> ZIGZAG_SHIFT) as $cast_ty) ^ ((value << 1) as $cast_ty);
+				Ok($size_fn(zigzag))
 			}
 		}
 	};
