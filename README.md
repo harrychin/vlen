@@ -62,6 +62,32 @@ MSB ------------------------------------ LSB
 - **Zero-copy operations** where possible
 - **Minimal allocation overhead** with optional `alloc` feature
 
+## Benchmarks
+
+`vlen` significantly outperforms the standard `leb128` (varint) encoding, especially when SIMD optimizations are enabled.
+
+The following benchmarks were run on a modern x86_64 system (Intel Core i7-1260P).
+
+### Single Value Performance
+
+Encoding/decoding a single `u32` value (`12,345,678`).
+
+| Operation | `vlen` | `leb128` | Speedup |
+|-----------|--------|----------|---------|
+| Encode    | 1.27 ns | 10.53 ns | **8.3x** |
+| Decode    | 0.46 ns | 27.68 ns | **60x** |
+
+### Bulk Performance (SIMD)
+
+Encoding/decoding 1,024 mixed `u32` values. This demonstrates the power of `vlen`'s SIMD optimizations.
+
+| Operation | `vlen` (SIMD) | `leb128` | Speedup |
+|-----------|---------------|----------|---------|
+| Encode    | 1.60 µs       | 10.11 µs | **6.3x** |
+| Decode    | 1.61 µs       | 22.50 µs | **14x** |
+
+*Note: `vlen` achieves >600 million integers per second for both encoding and decoding on this hardware.*
+
 ## Features
 
 - **`alloc`**: Enables allocation-dependent functionality (default: disabled)
@@ -162,6 +188,22 @@ assert_eq!(*val, 42);
 *val = 100;
 assert_eq!(*val, 100);
 assert_eq!(val.0, 100);
+```
+
+### Const Context Support
+
+`vlen` provides `const fn` versions of encoding and decoding functions under the `vlen::const_encode` and `vlen::const_decode` modules. These are useful for compile-time evaluation but are **not optimized for runtime performance**.
+
+For runtime usage, always prefer the standard functions (`vlen::encode`, `vlen::decode`, etc.) which include optimizations like SIMD and unrolled loops.
+
+```rust
+use vlen::const_encode::encode_u32;
+use vlen::const_decode::decode_u32;
+
+const ENCODED_LEN: usize = {
+    let mut buf = [0u8; 5];
+    encode_u32(&mut buf, 12345)
+};
 ```
 
 ## Handling of over-long encodings

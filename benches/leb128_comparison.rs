@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use integer_encoding::{VarInt, VarIntReader, VarIntWriter};
+use integer_encoding::{VarIntReader, VarIntWriter};
 use std::hint::black_box;
-use std::io::{Cursor, Read, Write};
-use vlen::{decode_u32, encode_u32};
+use std::io::Cursor;
+use vlen::{bulk_decode, bulk_encode, decode_u32, encode_u32};
 
 fn bench_vlen_encode(c: &mut Criterion) {
 	let mut buf = [0u8; 5];
@@ -57,7 +57,7 @@ fn bench_vlen_bulk_encode(c: &mut Criterion) {
 		.collect();
 
 	c.bench_function("vlen_bulk_encode", |b| {
-		b.iter(|| unsafe { vlen::bulk_encode_u32(&mut buf, &values) })
+		b.iter(|| bulk_encode(&mut buf, &values))
 	});
 }
 
@@ -72,13 +72,11 @@ fn bench_vlen_bulk_decode(c: &mut Criterion) {
 		})
 		.collect();
 
-	let encoded_len = unsafe { vlen::bulk_encode_u32(&mut buf, &values) };
+	let encoded_len = bulk_encode(&mut buf, &values).unwrap();
 	let mut decoded_values = [0u32; 1024];
 
 	c.bench_function("vlen_bulk_decode", |b| {
-		b.iter(|| unsafe {
-			vlen::bulk_decode_u32(&buf[..encoded_len], &mut decoded_values)
-		})
+		b.iter(|| bulk_decode(&buf[..encoded_len], &mut decoded_values))
 	});
 }
 

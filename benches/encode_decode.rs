@@ -1,16 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 use vlen::{
-	bulk_decode_u32,
-	bulk_encode_u32,
-	decode_u128,
-	decode_u16,
-	decode_u32,
-	decode_u64,
-	encode_u128,
-	encode_u16,
-	encode_u32,
-	encode_u64,
+	bulk_decode, bulk_encode, decode_u128, decode_u16, decode_u32, decode_u64,
+	encode_u128, encode_u16, encode_u32, encode_u64,
 };
 
 fn bench_encode_u16(c: &mut Criterion) {
@@ -90,7 +82,7 @@ fn bench_bulk_encode_u32(c: &mut Criterion) {
 		.collect();
 
 	c.bench_function("bulk_encode_u32", |b| {
-		b.iter(|| unsafe { bulk_encode_u32(&mut buf, &values) })
+		b.iter(|| bulk_encode(&mut buf, &values))
 	});
 }
 
@@ -106,13 +98,11 @@ fn bench_bulk_decode_u32(c: &mut Criterion) {
 		})
 		.collect();
 
-	let encoded_len = unsafe { bulk_encode_u32(&mut buf, &values) };
+	let encoded_len = bulk_encode(&mut buf, &values).unwrap();
 	let mut decoded_values = [0u32; 1024];
 
-	c.bench_function("bulk_decode_u32", |b| {
-		b.iter(|| unsafe {
-			bulk_decode_u32(&buf[..encoded_len], &mut decoded_values)
-		})
+	c.bench_function("bulk_decode", |b| {
+		b.iter(|| bulk_decode(&buf[..encoded_len], &mut decoded_values))
 	});
 }
 

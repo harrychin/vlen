@@ -1,12 +1,11 @@
 //! Decoding functions for vlen
 
-use crate::helpers::{is_aligned, ptr_from_ref};
-
 /// Macro for casting buffer to smaller type
 macro_rules! cast_buffer_ref {
 	($buf:expr, $from_size:expr, $to_size:expr) => {
 		unsafe {
-			&*(ptr_from_ref::<[u8; $from_size]>($buf).cast::<[u8; $to_size]>())
+			&*(crate::helpers::ptr_from_ref::<[u8; $from_size]>($buf)
+				.cast::<[u8; $to_size]>())
 		}
 	};
 }
@@ -31,7 +30,7 @@ macro_rules! decode_binary_length_prefix {
 		};
 		let value = unsafe {
 			let ptr = $buf.as_ptr().add(1).cast::<$T>();
-			if is_aligned::<{ $size }>(ptr as *const u8) {
+			if ptr.is_aligned() {
 				ptr.read()
 			} else {
 				ptr.read_unaligned()

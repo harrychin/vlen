@@ -1,6 +1,6 @@
 //! Encoding functions for vlen
 
-use crate::helpers::{is_aligned, ptr_from_mut};
+use crate::helpers::ptr_from_mut;
 
 /// Macro for writing aligned/unaligned values to a buffer at offset 1
 macro_rules! write_aligned_at_offset {
@@ -11,7 +11,7 @@ macro_rules! write_aligned_at_offset {
 					.cast::<u8>()
 					.add(1)
 					.cast::<$ut>();
-			if is_aligned::<{ core::mem::size_of::<$ut>() }>(ptr as *const u8) {
+			if ptr.is_aligned() {
 				ptr.write(($value >> $shift).to_le());
 			} else {
 				ptr.write_unaligned(($value >> $shift).to_le());
@@ -322,8 +322,8 @@ macro_rules! impl_encode_signed {
 				// For signed integers, we need to convert to unsigned for size calculation
 				const ZIGZAG_SHIFT: u8 =
 					(core::mem::size_of::<$t>() * 8 - 1) as u8;
-				let zigzag: $cast_ty =
-					((value >> ZIGZAG_SHIFT) as $cast_ty) ^ ((value << 1) as $cast_ty);
+				let zigzag: $cast_ty = ((value >> ZIGZAG_SHIFT) as $cast_ty)
+					^ ((value << 1) as $cast_ty);
 				Ok($size_fn(zigzag))
 			}
 

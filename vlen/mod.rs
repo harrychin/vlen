@@ -35,6 +35,8 @@ extern crate alloc;
 
 pub mod decode;
 pub mod encode;
+pub mod const_decode;
+pub mod const_encode;
 mod helpers;
 #[cfg(feature = "serde")]
 pub mod serde;
