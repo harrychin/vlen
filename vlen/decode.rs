@@ -27,6 +27,29 @@ const fn read_array<const N: usize>(buf: &[u8], offset: usize) -> [u8; N] {
 	arr
 }
 
+/// Decodes a `u8` from a buffer, returning the value and encoded length.
+///
+/// Two-byte encodings can carry values up to `2^14 - 1`; anything
+/// above `u8::MAX` is truncated. Use [`Decode`] to reject such input.
+#[inline]
+#[must_use]
+pub const fn decode_u8(buf: &[u8; 2]) -> (u8, usize) {
+	let b0 = buf[0];
+	if b0 < 0x80 {
+		(b0, 1)
+	} else {
+		((((buf[1] as u16) << 6) | ((b0 & 0x3F) as u16)) as u8, 2)
+	}
+}
+
+/// Decodes an `i8` from a buffer, returning the value and encoded length.
+#[inline]
+#[must_use]
+pub const fn decode_i8(buf: &[u8; 2]) -> (i8, usize) {
+	let (zigzag, len) = decode_u8(buf);
+	(((zigzag >> 1) as i8) ^ (-((zigzag & 1) as i8)), len)
+}
+
 /// Decodes a `u16` from a buffer, returning the value and encoded length.
 ///
 /// Three-byte encodings can carry values up to `2^21 - 1`; anything
@@ -297,6 +320,76 @@ impl Decode for u16 {
 	}
 }
 
+decode_short_fn!(decode_u8_short, u16, 2, decode_u8_wide);
+
+impl Decode for u8 {
+	const MAX_ENCODED_SIZE: usize = 2;
+
+	#[inline(always)]
+	fn decode(buf: &[u8]) -> Result<(Self, usize)> {
+		// Decode through the u16 grammar so that two-byte encodings
+		// carrying values above u8::MAX are rejected, not truncated.
+		let (value, len) = if let Some(arr) = buf.first_chunk::<2>() {
+			// Anything announcing three or more bytes is invalid.
+			if arr[0] >= 0xC0 {
+				return Err(Error::InvalidPrefix { prefix: arr[0] });
+			}
+			decode_u8_wide(arr)
+		} else {
+			decode_u8_short(buf)?
+		};
+		if value > u8::MAX as u16 {
+			return Err(Error::Overflow);
+		}
+		Ok((value as u8, len))
+	}
+}
+
+/// Decodes a u8-sized buffer through the u16 grammar, preserving
+/// two-byte values above `u8::MAX` for range checking. The caller has
+/// already rejected prefixes longer than two bytes.
+#[inline]
+const fn decode_u8_wide(buf: &[u8; 2]) -> (u16, usize) {
+	let b0 = buf[0];
+	if b0 < 0x80 {
+		(b0 as u16, 1)
+	} else {
+		(((buf[1] as u16) << 6) | ((b0 & 0x3F) as u16), 2)
+	}
+}
+
+/// `usize` decodes through the `u64` grammar (the wire format is
+/// platform-independent); values that do not fit the platform's
+/// pointer width fail with [`Error::Overflow`].
+impl Decode for usize {
+	const MAX_ENCODED_SIZE: usize = 9;
+
+	#[inline(always)]
+	fn decode(buf: &[u8]) -> Result<(Self, usize)> {
+		let (value, len) = u64::decode(buf)?;
+		match usize::try_from(value) {
+			Ok(value) => Ok((value, len)),
+			Err(_) => Err(Error::Overflow),
+		}
+	}
+}
+
+/// `isize` decodes through the `i64` grammar (the wire format is
+/// platform-independent); values that do not fit the platform's
+/// pointer width fail with [`Error::Overflow`].
+impl Decode for isize {
+	const MAX_ENCODED_SIZE: usize = 9;
+
+	#[inline(always)]
+	fn decode(buf: &[u8]) -> Result<(Self, usize)> {
+		let (value, len) = i64::decode(buf)?;
+		match isize::try_from(value) {
+			Ok(value) => Ok((value, len)),
+			Err(_) => Err(Error::Overflow),
+		}
+	}
+}
+
 /// Decodes a u16-sized buffer through the u32 grammar, preserving
 /// three-byte values above `u16::MAX` for range checking.
 #[inline]
@@ -330,6 +423,7 @@ macro_rules! impl_decode_signed {
 	};
 }
 
+impl_decode_signed!(i8, u8, 2);
 impl_decode_signed!(i16, u16, 3);
 impl_decode_signed!(i32, u32, 5);
 impl_decode_signed!(i64, u64, 9);

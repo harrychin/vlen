@@ -236,3 +236,113 @@ vlen_wrapper! {
 	/// Serializes an `f64` using vlen encoding.
 	VlenF64(f64)
 }
+
+vlen_wrapper! {
+	/// Serializes a `u8` using vlen encoding.
+	VlenU8(u8), Eq, Ord, Hash
+}
+vlen_wrapper! {
+	/// Serializes an `i8` using vlen encoding.
+	VlenI8(i8), Eq, Ord, Hash
+}
+vlen_wrapper! {
+	/// Serializes a `usize` using vlen encoding (platform-independent
+	/// `u64` wire format).
+	VlenUsize(usize), Eq, Ord, Hash
+}
+vlen_wrapper! {
+	/// Serializes an `isize` using vlen encoding (platform-independent
+	/// `i64` wire format).
+	VlenIsize(isize), Eq, Ord, Hash
+}
+
+/// Generates a `#[serde(with = "...")]` module so plain fields can use
+/// vlen encoding without wrapper types.
+macro_rules! with_module {
+	(
+		$(#[$docs:meta])*
+		$mod_name:ident, $wrapper:ident, $inner:ty
+	) => {
+		$(#[$docs])*
+		pub mod $mod_name {
+			use ::serde::{
+				Deserialize as _, Deserializer, Serialize as _, Serializer,
+			};
+
+			/// Serializes the field through the vlen codec.
+			pub fn serialize<S: Serializer>(
+				value: &$inner,
+				serializer: S,
+			) -> Result<S::Ok, S::Error> {
+				super::$wrapper(*value).serialize(serializer)
+			}
+
+			/// Deserializes the field through the vlen codec.
+			pub fn deserialize<'de, D: Deserializer<'de>>(
+				deserializer: D,
+			) -> Result<$inner, D::Error> {
+				super::$wrapper::deserialize(deserializer)
+					.map(|wrapper| wrapper.0)
+			}
+		}
+	};
+}
+
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::u8")]` on a `u8` field.
+	u8, VlenU8, u8
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::u16")]` on a `u16` field.
+	u16, VlenU16, u16
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::u32")]` on a `u32` field.
+	u32, VlenU32, u32
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::u64")]` on a `u64` field.
+	u64, VlenU64, u64
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::u128")]` on a `u128` field.
+	u128, VlenU128, u128
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::usize")]` on a `usize`
+	/// field (platform-independent `u64` wire format).
+	usize, VlenUsize, usize
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::i8")]` on an `i8` field.
+	i8, VlenI8, i8
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::i16")]` on an `i16` field.
+	i16, VlenI16, i16
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::i32")]` on an `i32` field.
+	i32, VlenI32, i32
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::i64")]` on an `i64` field.
+	i64, VlenI64, i64
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::i128")]` on an `i128` field.
+	i128, VlenI128, i128
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::isize")]` on an `isize`
+	/// field (platform-independent `i64` wire format).
+	isize, VlenIsize, isize
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::f32")]` on an `f32` field.
+	f32, VlenF32, f32
+}
+with_module! {
+	/// Use with `#[serde(with = "vlen::serde::f64")]` on an `f64` field.
+	f64, VlenF64, f64
+}

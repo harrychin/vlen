@@ -101,10 +101,30 @@ assert_eq!(decoded?, values);
 # Ok::<(), vlen::Error>(())
 ```
 
-**Serde that respects your format.** With the `serde` feature, the
-`Vlen*` wrapper types hand binary formats (postcard, bincode, ...) the
-raw encoded bytes and human-readable formats (JSON, ...) base64 —
-allocation-free either way, hostile input rejected with errors.
+**Ergonomics that scale from one value to a protocol.** Every
+integer width is supported — including `usize` for length prefixes,
+with a platform-independent wire format — and the `Writer`/`Reader`
+cursors handle mixed-type messages without offset bookkeeping:
+
+```rust
+let mut buf = [0u8; 16];
+let mut writer = vlen::Writer::new(&mut buf);
+writer.write(7u32)?;
+writer.write(-42i64)?;
+let len = writer.finish();
+
+let mut reader = vlen::Reader::new(&buf[..len]);
+assert_eq!(reader.read::<u32>()?, 7);
+assert_eq!(reader.read::<i64>()?, -42);
+# Ok::<(), vlen::Error>(())
+```
+
+**Serde that respects your format.** With the `serde` feature,
+annotate plain fields with `#[serde(with = "vlen::serde::u32")]` (or
+use the `Vlen*` wrapper types): binary formats (postcard, bincode,
+...) get the raw encoded bytes and human-readable formats (JSON, ...)
+get base64 — allocation-free either way, hostile input rejected with
+errors.
 
 ## Features
 

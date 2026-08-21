@@ -27,6 +27,13 @@ pub const fn encoded_len(b: u8) -> usize {
 	}
 }
 
+/// Calculates the encoded size of a `u8` value without encoding it.
+#[inline]
+#[must_use]
+pub const fn encoded_size_u8(value: u8) -> usize {
+	if value < 0x80 { 1 } else { 2 }
+}
+
 /// Calculates the encoded size of a `u16` value without encoding it.
 ///
 /// Branch-free: seven value bits fit per encoded byte, so the size
@@ -72,6 +79,27 @@ pub const fn encoded_size_u128(value: u128) -> usize {
 		let len = ((value.leading_zeros() >> 3) as u8) ^ 0b1111;
 		(len + 2) as usize
 	}
+}
+
+/// Encodes a `u8` into a buffer, returning the encoded length.
+#[inline]
+#[must_use]
+pub const fn encode_u8(buf: &mut [u8; 2], value: u8) -> usize {
+	if value < 0x80 {
+		buf[0] = value;
+		1
+	} else {
+		buf[0] = 0x80 | (value & 0x3F);
+		buf[1] = value >> 6;
+		2
+	}
+}
+
+/// Encodes an `i8` into a buffer, returning the encoded length.
+#[inline]
+#[must_use]
+pub const fn encode_i8(buf: &mut [u8; 2], value: i8) -> usize {
+	encode_u8(buf, ((value >> 7) as u8) ^ ((value << 1) as u8))
 }
 
 /// Encodes a `u16` into a buffer, returning the encoded length.
@@ -341,6 +369,43 @@ impl_encode!(
 	i128, 17, encode_i128, encode_i128_short,
 	v => encoded_size_u128(zigzag!(i128, u128, v))
 );
+
+impl_encode!(u8, 2, encode_u8, encode_u8_short,
+	v => encoded_size_u8(v));
+impl_encode!(i8, 2, encode_i8, encode_i8_short,
+	v => encoded_size_u8(zigzag!(i8, u8, v)));
+
+/// `usize` encodes through the `u64` grammar, so the wire format is
+/// identical on every platform.
+impl Encode for usize {
+	const MAX_ENCODED_SIZE: usize = 9;
+
+	#[inline]
+	fn encoded_size(self) -> usize {
+		encoded_size_u64(self as u64)
+	}
+
+	#[inline(always)]
+	fn encode(self, buf: &mut [u8]) -> Result<usize> {
+		(self as u64).encode(buf)
+	}
+}
+
+/// `isize` encodes through the `i64` grammar, so the wire format is
+/// identical on every platform.
+impl Encode for isize {
+	const MAX_ENCODED_SIZE: usize = 9;
+
+	#[inline]
+	fn encoded_size(self) -> usize {
+		encoded_size_u64(zigzag!(i64, u64, self as i64))
+	}
+
+	#[inline(always)]
+	fn encode(self, buf: &mut [u8]) -> Result<usize> {
+		(self as i64).encode(buf)
+	}
+}
 
 impl_encode!(f32, 5, encode_f32, encode_f32_short, v => {
 	encoded_size_u32(v.to_bits().swap_bytes())

@@ -165,3 +165,37 @@ fn vectors_round_trip() {
 	let from_postcard: VectorTest = postcard::from_bytes(&bytes).unwrap();
 	assert_eq!(data, from_postcard);
 }
+
+#[test]
+fn with_modules_annotate_plain_fields() {
+	#[derive(Debug, Serialize, Deserialize, PartialEq)]
+	struct Plain {
+		#[serde(with = "vlen::serde::u32")]
+		id: u32,
+		#[serde(with = "vlen::serde::i64")]
+		timestamp: i64,
+		#[serde(with = "vlen::serde::usize")]
+		count: usize,
+		#[serde(with = "vlen::serde::f32")]
+		score: f32,
+	}
+
+	let data = Plain {
+		id: 123456789,
+		timestamp: -1234567890,
+		count: 42,
+		score: 1.5,
+	};
+
+	let json = serde_json::to_string(&data).unwrap();
+	let from_json: Plain = serde_json::from_str(&json).unwrap();
+	assert_eq!(data, from_json);
+
+	let bytes = postcard::to_stdvec(&data).unwrap();
+	let from_postcard: Plain = postcard::from_bytes(&bytes).unwrap();
+	assert_eq!(data, from_postcard);
+
+	// The field representation is identical to the wrapper types'.
+	let wrapper_json = serde_json::to_string(&VlenU32(123456789)).unwrap();
+	assert!(json.contains(wrapper_json.trim_matches('"')));
+}

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.4
+
+### Added
+
+- `Writer` and `Reader`: sequential cursors over byte slices for
+  encoding and decoding mixed-type messages without manual offset
+  bookkeeping (`no_std`, zero-cost).
+- `Encode`/`Decode` for `u8`, `i8`, `usize`, and `isize`, plus their
+  array-based `const fn` codecs. `u8`/`i8` share the `u16` grammar;
+  `usize`/`isize` share `u64`/`i64`, so the wire format stays
+  identical across platforms (with `Overflow` on narrower targets).
+- `encode_append` and `bulk_encode_append`: append encodings to an
+  existing `Vec<u8>` without the per-value allocation of
+  `encode_to_vec`.
+- `#[serde(with = "vlen::serde::u32")]`-style modules for every
+  supported type, so plain fields can use vlen encoding without
+  wrapper types, plus `VlenU8`/`VlenI8`/`VlenUsize`/`VlenIsize`
+  wrappers.
+
 ## 0.4.3
 
 ### Changed

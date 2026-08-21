@@ -58,6 +58,7 @@
 extern crate alloc;
 
 pub mod bulk;
+mod cursor;
 pub mod decode;
 pub mod encode;
 mod error;
@@ -74,18 +75,20 @@ mod kernels;
 #[cfg(feature = "serde")]
 pub mod serde;
 
+pub use cursor::{Reader, Writer};
 pub use error::{Error, Result};
 
 pub use decode::{
-	Decode, decode, decode_f32, decode_f64, decode_i16, decode_i32, decode_i64,
-	decode_i128, decode_u16, decode_u32, decode_u64, decode_u128,
+	Decode, decode, decode_f32, decode_f64, decode_i8, decode_i16, decode_i32,
+	decode_i64, decode_i128, decode_u8, decode_u16, decode_u32, decode_u64,
+	decode_u128,
 };
 
 pub use encode::{
-	Encode, encode, encode_f32, encode_f64, encode_i16, encode_i32, encode_i64,
-	encode_i128, encode_u16, encode_u32, encode_u64, encode_u128, encoded_len,
-	encoded_size, encoded_size_u16, encoded_size_u32, encoded_size_u64,
-	encoded_size_u128,
+	Encode, encode, encode_f32, encode_f64, encode_i8, encode_i16, encode_i32,
+	encode_i64, encode_i128, encode_u8, encode_u16, encode_u32, encode_u64,
+	encode_u128, encoded_len, encoded_size, encoded_size_u8, encoded_size_u16,
+	encoded_size_u32, encoded_size_u64, encoded_size_u128,
 };
 
 pub use bulk::{
@@ -115,6 +118,30 @@ pub fn encode_to_vec<T: Encode>(value: T) -> alloc::vec::Vec<u8> {
 		.expect("buffer sized by encoded_size");
 	debug_assert_eq!(len, buf.len());
 	buf
+}
+
+/// Appends the encoding of `value` to a byte vector.
+#[cfg(feature = "alloc")]
+pub fn encode_append<T: Encode>(buf: &mut alloc::vec::Vec<u8>, value: T) {
+	let mut tmp = [0u8; 17];
+	let len = value
+		.encode(&mut tmp)
+		.expect("seventeen bytes fit any encoding");
+	buf.extend_from_slice(&tmp[..len]);
+}
+
+/// Appends the encodings of all `values` to a byte vector.
+#[cfg(feature = "alloc")]
+pub fn bulk_encode_append<T: Encode>(
+	buf: &mut alloc::vec::Vec<u8>,
+	values: &[T],
+) {
+	let total: usize = values.iter().map(|v| v.encoded_size()).sum();
+	let start = buf.len();
+	buf.resize(start + total, 0);
+	let len = bulk_encode(&mut buf[start..], values)
+		.expect("buffer sized by encoded_size");
+	debug_assert_eq!(len, total);
 }
 
 /// Encodes a slice of values into a newly allocated buffer.

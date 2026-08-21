@@ -531,3 +531,124 @@ fn signed_run_iter_matches_generic_iter() {
 		.unwrap();
 	assert_eq!(specialized32, narrow);
 }
+
+#[test]
+fn byte_and_pointer_width_types_round_trip() {
+	// u8/i8 share the u16 grammar; usize/isize share u64/i64, so the
+	// wire format stays identical across platforms.
+	for value in [0u8, 1, 0x7F, 0x80, u8::MAX] {
+		let mut buf = [0u8; 2];
+		let len = value.encode(&mut buf).unwrap();
+		assert_eq!(len, value.encoded_size());
+		let (back, back_len) = u8::decode(&buf[..len]).unwrap();
+		assert_eq!((back, back_len), (value, len));
+		// Byte-identical with the u16 encoding of the same value.
+		let mut wide = [0u8; 3];
+		let wide_len = vlen::encode_u16(&mut wide, value as u16);
+		assert_eq!(&wide[..wide_len], &buf[..len]);
+	}
+	for value in [0i8, 1, -1, i8::MIN, i8::MAX] {
+		let mut buf = [0u8; 2];
+		let len = value.encode(&mut buf).unwrap();
+		let (back, _) = i8::decode(&buf[..len]).unwrap();
+		assert_eq!(back, value);
+	}
+	for value in [0usize, 1, 0x7F, 0xFFFF, usize::MAX] {
+		let mut buf = [0u8; 9];
+		let len = value.encode(&mut buf).unwrap();
+		assert_eq!(len, value.encoded_size());
+		let (back, _) = usize::decode(&buf[..len]).unwrap();
+		assert_eq!(back, value);
+		// Byte-identical with the u64 encoding.
+		let mut wide = [0u8; 9];
+		let wide_len = vlen::encode_u64(&mut wide, value as u64);
+		assert_eq!(&wide[..wide_len], &buf[..len]);
+	}
+	for value in [0isize, 1, -1, isize::MIN, isize::MAX] {
+		let mut buf = [0u8; 9];
+		let len = value.encode(&mut buf).unwrap();
+		let (back, _) = isize::decode(&buf[..len]).unwrap();
+		assert_eq!(back, value);
+	}
+}
+
+#[test]
+fn byte_types_reject_out_of_range_and_invalid() {
+	// A two-byte encoding carrying more than u8::MAX.
+	let mut buf = [0u8; 3];
+	let len = vlen::encode_u16(&mut buf, 0x100);
+	assert_eq!(u8::decode(&buf[..len]), Err(Error::Overflow));
+	// Prefixes announcing three or more bytes are invalid for u8.
+	assert_eq!(
+		u8::decode(&[0xC0u8, 0, 0]),
+		Err(Error::InvalidPrefix { prefix: 0xC0 })
+	);
+	// usize on 32-bit targets rejects values above u32::MAX.
+	let mut wide = [0u8; 9];
+	let wide_len = vlen::encode_u64(&mut wide, u64::from(u32::MAX) + 1);
+	let decoded = usize::decode(&wide[..wide_len]);
+	#[cfg(target_pointer_width = "64")]
+	assert_eq!(decoded, Ok((u32::MAX as usize + 1, wide_len)));
+	#[cfg(target_pointer_width = "32")]
+	assert_eq!(decoded, Err(Error::Overflow));
+}
+
+#[test]
+fn writer_and_reader_round_trip_mixed_types() {
+	let mut buf = [0u8; 64];
+	let mut writer = vlen::Writer::new(&mut buf);
+	writer.write(7u32).unwrap();
+	writer.write(-42i64).unwrap();
+	writer.write(1.5f32).unwrap();
+	writer.write(usize::MAX).unwrap();
+	assert_eq!(writer.remaining(), 64 - writer.position());
+	let len = writer.finish();
+
+	let mut reader = vlen::Reader::new(&buf[..len]);
+	assert_eq!(reader.read::<u32>().unwrap(), 7);
+	assert_eq!(reader.read::<i64>().unwrap(), -42);
+	assert_eq!(reader.read::<f32>().unwrap(), 1.5);
+	assert_eq!(reader.read::<usize>().unwrap(), usize::MAX);
+	assert!(reader.is_empty());
+	assert_eq!(reader.position(), len);
+
+	// Reading past the end is a clean error, not a panic.
+	assert_eq!(
+		reader.read::<u32>(),
+		Err(Error::BufferTooSmall {
+			needed: 1,
+			available: 0
+		})
+	);
+}
+
+#[test]
+fn writer_reports_out_of_space() {
+	let mut buf = [0u8; 3];
+	let mut writer = vlen::Writer::new(&mut buf);
+	writer.write(1u32).unwrap();
+	assert!(writer.write(u32::MAX).is_err());
+	// A failed write leaves the position unchanged.
+	assert_eq!(writer.position(), 1);
+	assert_eq!(writer.finish(), 1);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn encode_append_matches_encode_to_vec() {
+	let mut appended = Vec::new();
+	vlen::encode_append(&mut appended, 5u32);
+	vlen::encode_append(&mut appended, u64::MAX);
+	vlen::encode_append(&mut appended, -7i32);
+
+	let mut expected = vlen::encode_to_vec(5u32);
+	expected.extend(vlen::encode_to_vec(u64::MAX));
+	expected.extend(vlen::encode_to_vec(-7i32));
+	assert_eq!(appended, expected);
+
+	let values = [1u32, 0x4000, u32::MAX];
+	let mut bulk = Vec::from(&b"header"[..]);
+	vlen::bulk_encode_append(&mut bulk, &values);
+	assert_eq!(&bulk[..6], b"header");
+	assert_eq!(&bulk[6..], &vlen::bulk_encode_to_vec(&values)[..]);
+}
