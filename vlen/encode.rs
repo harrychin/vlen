@@ -13,38 +13,40 @@
 use crate::error::{Error, Result};
 
 /// Returns the total encoded length announced by a `vlen` prefix byte.
+///
+/// Prefix-varint first bytes announce their length through the count
+/// of leading one bits; binary-length prefixes carry it in the low
+/// nibble.
+#[inline]
 #[must_use]
 pub const fn encoded_len(b: u8) -> usize {
-	match b {
-		_ if b < 0x80 => 1,
-		_ if b < 0xC0 => 2,
-		_ if b < 0xE0 => 3,
-		_ if b < 0xF0 => 4,
-		_ => ((b & 0x0F) + 2) as usize,
+	if b < 0xF0 {
+		b.leading_ones() as usize + 1
+	} else {
+		((b & 0x0F) + 2) as usize
 	}
 }
 
 /// Calculates the encoded size of a `u16` value without encoding it.
+///
+/// Branch-free: seven value bits fit per encoded byte, so the size
+/// falls out of the bit width directly.
 #[inline]
 #[must_use]
 pub const fn encoded_size_u16(value: u16) -> usize {
-	match value {
-		_ if value < 0x80 => 1,
-		_ if value < 0x4000 => 2,
-		_ => 3,
-	}
+	(38 - (value as u32 | 1).leading_zeros() as usize) / 7
 }
 
 /// Calculates the encoded size of a `u32` value without encoding it.
 #[inline]
 #[must_use]
 pub const fn encoded_size_u32(value: u32) -> usize {
-	match value {
-		_ if value < 0x80 => 1,
-		_ if value < 0x4000 => 2,
-		_ if value < 0x200000 => 3,
-		_ if value < 0x10000000 => 4,
-		_ => 5,
+	if value < 0x10000000 {
+		// Branch-free within the prefix-varint range: seven value
+		// bits fit per encoded byte.
+		(38 - (value | 1).leading_zeros() as usize) / 7
+	} else {
+		5
 	}
 }
 

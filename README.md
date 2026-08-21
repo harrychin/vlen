@@ -92,6 +92,24 @@ criterion run — measure on your own hardware):
 | all < 128    | **4.4x faster**               | **5.3x faster**               |
 | all 5-byte   | ~1.1x slower                  | **1.5x faster**               |
 | mixed sizes  | ~1.2x slower                  | ~1.2x slower                  |
+| random sizes | ~1.1x slower                  | ~1.1x slower                  |
+
+### Performance notes
+
+The scalar codec is deliberately branchy rather than branchless: a
+decoder's next read position depends on the current value's length, and
+letting the branch predictor speculate through that chain overlaps
+iterations, which measures substantially faster on modern out-of-order
+cores than a branch-free implementation whose arithmetic becomes the
+serial critical path (a branch-free variant of this codec benchmarked
+about 2.7x slower on unpredictable bulk decodes). Size calculations
+(`encoded_size_*`, `encoded_len`) are branch-free, so summing sizes
+over a slice vectorizes.
+
+vlen is sensitive to inlining. If encode/decode shows up in your
+profiles, build with `lto = "thin"` (or `"fat"`) and consider
+`codegen-units = 1` in your release profile; `-C target-cpu=native`
+helps the SWAR bulk paths.
 
 ### Comparison with other encodings
 
