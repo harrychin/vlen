@@ -4,50 +4,50 @@
 <text x="0" y="40" class="t2" font-size="12.5">benches/comparison.rs &#183; each codec through its fastest in-memory API &#183; Apple M-series &#183; criterion medians</text>
 <text x="0" y="76" class="t1" font-size="13.5" font-weight="600">Small values (all one-byte)</text>
 <text x="128" y="104.0" class="t2" font-size="12.5" text-anchor="end">vlen</text>
-<path d="M140,92.0 h25 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-25 z" fill="#2a78d6"/>
-<text x="177" y="104.0" class="t1" font-size="12.5" font-weight="600">0.13 µs</text>
+<path d="M140,92.0 h26 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-26 z" fill="#2a78d6"/>
+<text x="178" y="104.0" class="t1" font-size="12.5" font-weight="600">0.14 µs</text>
 <text x="128" y="128.0" class="t2" font-size="12.5" text-anchor="end">LEB128</text>
-<path d="M140,116.0 h395 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-395 z" fill="#eb6834"/>
-<text x="547" y="128.0" class="t1" font-size="12.5" font-weight="600">1.78 µs</text>
+<path d="M140,116.0 h403 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-403 z" fill="#eb6834"/>
+<text x="555" y="128.0" class="t1" font-size="12.5" font-weight="600">1.92 µs</text>
 <text x="128" y="152.0" class="t2" font-size="12.5" text-anchor="end">prost</text>
-<path d="M140,140.0 h393 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-393 z" fill="#1baf7a"/>
-<text x="545" y="152.0" class="t1" font-size="12.5" font-weight="600">1.77 µs</text>
+<path d="M140,140.0 h367 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-367 z" fill="#1baf7a"/>
+<text x="519" y="152.0" class="t1" font-size="12.5" font-weight="600">1.75 µs</text>
 <text x="128" y="176.0" class="t2" font-size="12.5" text-anchor="end">vint64</text>
-<path d="M140,164.0 h491 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-491 z" fill="#eda100"/>
-<text x="643" y="176.0" class="t1" font-size="12.5" font-weight="600">2.21 µs</text>
+<path d="M140,164.0 h348 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-348 z" fill="#eda100"/>
+<text x="500" y="176.0" class="t1" font-size="12.5" font-weight="600">1.66 µs</text>
 <text x="128" y="200.0" class="t2" font-size="12.5" text-anchor="end">stream-vbyte</text>
-<path d="M140,188.0 h263 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-263 z" fill="#e87ba4"/>
-<text x="415" y="200.0" class="t1" font-size="12.5" font-weight="600">1.19 µs</text>
+<path d="M140,188.0 h274 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-274 z" fill="#e87ba4"/>
+<text x="426" y="200.0" class="t1" font-size="12.5" font-weight="600">1.31 µs</text>
 <text x="0" y="248" class="t1" font-size="13.5" font-weight="600">Mixed sizes (periodic)</text>
 <text x="128" y="276.0" class="t2" font-size="12.5" text-anchor="end">vlen</text>
-<path d="M140,264.0 h180 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-180 z" fill="#2a78d6"/>
-<text x="332" y="276.0" class="t1" font-size="12.5" font-weight="600">0.82 µs</text>
+<path d="M140,264.0 h181 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-181 z" fill="#2a78d6"/>
+<text x="333" y="276.0" class="t1" font-size="12.5" font-weight="600">0.87 µs</text>
 <text x="128" y="300.0" class="t2" font-size="12.5" text-anchor="end">LEB128</text>
-<path d="M140,288.0 h523 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-523 z" fill="#eb6834"/>
-<text x="675" y="300.0" class="t1" font-size="12.5" font-weight="600">2.35 µs</text>
+<path d="M140,288.0 h482 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-482 z" fill="#eb6834"/>
+<text x="634" y="300.0" class="t1" font-size="12.5" font-weight="600">2.29 µs</text>
 <text x="128" y="324.0" class="t2" font-size="12.5" text-anchor="end">prost</text>
-<path d="M140,312.0 h440 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-440 z" fill="#1baf7a"/>
-<text x="592" y="324.0" class="t1" font-size="12.5" font-weight="600">1.98 µs</text>
+<path d="M140,312.0 h384 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-384 z" fill="#1baf7a"/>
+<text x="536" y="324.0" class="t1" font-size="12.5" font-weight="600">1.83 µs</text>
 <text x="128" y="348.0" class="t2" font-size="12.5" text-anchor="end">vint64</text>
-<path d="M140,336.0 h507 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-507 z" fill="#eda100"/>
-<text x="659" y="348.0" class="t1" font-size="12.5" font-weight="600">2.28 µs</text>
+<path d="M140,336.0 h475 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-475 z" fill="#eda100"/>
+<text x="627" y="348.0" class="t1" font-size="12.5" font-weight="600">2.26 µs</text>
 <text x="128" y="372.0" class="t2" font-size="12.5" text-anchor="end">stream-vbyte</text>
-<path d="M140,360.0 h328 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-328 z" fill="#e87ba4"/>
-<text x="480" y="372.0" class="t1" font-size="12.5" font-weight="600">1.48 µs</text>
+<path d="M140,360.0 h318 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-318 z" fill="#e87ba4"/>
+<text x="470" y="372.0" class="t1" font-size="12.5" font-weight="600">1.52 µs</text>
 <text x="0" y="420" class="t1" font-size="13.5" font-weight="600">Random sizes (unpredictable)</text>
 <text x="128" y="448.0" class="t2" font-size="12.5" text-anchor="end">vlen</text>
-<path d="M140,436.0 h274 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-274 z" fill="#2a78d6"/>
-<text x="426" y="448.0" class="t1" font-size="12.5" font-weight="600">1.24 µs</text>
+<path d="M140,436.0 h246 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-246 z" fill="#2a78d6"/>
+<text x="398" y="448.0" class="t1" font-size="12.5" font-weight="600">1.18 µs</text>
 <text x="128" y="472.0" class="t2" font-size="12.5" text-anchor="end">LEB128</text>
 <path d="M140,460.0 h628 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-628 z" fill="#eb6834"/>
-<text x="780" y="472.0" class="t1" font-size="12.5" font-weight="600">2.82 µs</text>
+<text x="780" y="472.0" class="t1" font-size="12.5" font-weight="600">2.98 µs</text>
 <text x="128" y="496.0" class="t2" font-size="12.5" text-anchor="end">prost</text>
-<path d="M140,484.0 h429 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-429 z" fill="#1baf7a"/>
-<text x="581" y="496.0" class="t1" font-size="12.5" font-weight="600">1.93 µs</text>
+<path d="M140,484.0 h384 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-384 z" fill="#1baf7a"/>
+<text x="536" y="496.0" class="t1" font-size="12.5" font-weight="600">1.83 µs</text>
 <text x="128" y="520.0" class="t2" font-size="12.5" text-anchor="end">vint64</text>
-<path d="M140,508.0 h563 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-563 z" fill="#eda100"/>
-<text x="715" y="520.0" class="t1" font-size="12.5" font-weight="600">2.53 µs</text>
+<path d="M140,508.0 h543 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-543 z" fill="#eda100"/>
+<text x="695" y="520.0" class="t1" font-size="12.5" font-weight="600">2.58 µs</text>
 <text x="128" y="544.0" class="t2" font-size="12.5" text-anchor="end">stream-vbyte</text>
-<path d="M140,532.0 h438 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-438 z" fill="#e87ba4"/>
-<text x="590" y="544.0" class="t1" font-size="12.5" font-weight="600">1.97 µs</text>
+<path d="M140,532.0 h424 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-424 z" fill="#e87ba4"/>
+<text x="576" y="544.0" class="t1" font-size="12.5" font-weight="600">2.02 µs</text>
 </svg>

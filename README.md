@@ -30,17 +30,18 @@ included:
 
 | Benchmark (1,024 u32) | vlen | LEB128 | prost | vint64 | stream-vbyte |
 |-----------------------|-----:|-------:|------:|-------:|-------------:|
-| bulk encode, small values | **0.17 µs** | 1.04 µs | 0.97 µs | 1.99 µs | 0.56 µs |
-| bulk encode, mixed sizes  | 1.03 µs | 1.79 µs | 1.76 µs | 2.52 µs | **0.80 µs** |
-| single decode (4-byte value) | **0.82 ns** | 2.32 ns | 0.94 ns | 2.21 ns | – |
-| single encode (4-byte value) | 1.65 ns | 2.97 ns | 2.83 ns | **0.91 ns** | – |
+| bulk encode, small values | **0.14 µs** | 0.77 µs | 0.90 µs | 1.93 µs | 0.51 µs |
+| bulk encode, mixed sizes  | **0.82 µs** | 1.48 µs | 1.86 µs | 2.40 µs | 0.98 µs |
+| bulk encode, random sizes | 1.63 µs | 1.78 µs | 2.70 µs | 2.99 µs | **1.08 µs** |
+| single decode (4-byte value) | **0.58 ns** | 2.01 ns | 0.80 ns | 2.36 ns | – |
+| single encode (4-byte value) | 1.50 ns | 1.86 ns | 2.44 ns | **0.81 ns** | – |
 
 Methodology: every codec through its fastest public in-memory API over
 identical data, from one run of `benches/comparison.rs`. The bulk rows
 and the chart all use vlen's validating API. The single-value rows use
 its infallible array API; through the validating slice API — the same
-work the other crates always do — vlen measures 0.90 ns decode /
-1.74 ns encode, level with prost's validating decode (0.94 ns).
+work the other crates always do — vlen measures 0.77 ns decode /
+1.58 ns encode, level with prost's validating decode (0.80 ns).
 stream-vbyte runs its scalar kernels (its SSE4.1 decoder is faster on
 x86_64) and is a control-stream format rather than a self-delimiting
 varint; `prost` and `vint64` are 64-bit codecs fed the same values
@@ -118,8 +119,10 @@ with clippy, rustfmt, and `no_std` builds gating every change.
 
 If your workload is purely columnar bulk `u32` compression — no
 streaming, no self-delimiting values — a control-stream format like
-`stream-vbyte` can encode mixed-size batches faster. vlen is built for
-the general case: self-delimiting streams you can read value by value.
+`stream-vbyte` encodes unpredictably interleaved sizes faster (its
+lengths live in a separate control stream, so per-value size changes
+cost it nothing). vlen is built for the general case: self-delimiting
+streams you can read value by value.
 
 ## Learn more
 

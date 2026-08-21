@@ -107,27 +107,44 @@ macro_rules! encode_unsigned {
 		#[inline]
 		#[must_use]
 		pub const fn $name(buf: &mut [u8; $size], value: $ut) -> usize {
+			// Each prefix-varint form is built as one little-endian
+			// word and stored whole (trailing bytes are scratch), so
+			// every arm is a single computation and a single store.
 			match value {
 				_ if value < 0x80 => {
 					buf[0] = value as u8;
 					1
 				},
 				_ if value < 0x4000 => {
-					buf[0] = 0x80 | ((value & 0x3F) as u8);
-					buf[1] = (value >> 6) as u8;
+					let word = 0x80
+						| ((value & 0x3F) as u16)
+						| (((value >> 6) as u16) << 8);
+					let b = word.to_le_bytes();
+					buf[0] = b[0];
+					buf[1] = b[1];
 					2
 				},
 				_ if value < 0x200000 => {
-					buf[0] = 0xC0 | ((value & 0x1F) as u8);
-					buf[1] = (value >> 5) as u8;
-					buf[2] = (value >> 13) as u8;
+					let word = 0xC0
+						| ((value & 0x1F) as u32)
+						| ((((value >> 5) as u32) & 0xFF) << 8)
+						| (((value >> 13) as u32) << 16);
+					let b = word.to_le_bytes();
+					buf[0] = b[0];
+					buf[1] = b[1];
+					buf[2] = b[2];
+					buf[3] = b[3];
 					3
 				},
 				_ if value < 0x10000000 => {
-					buf[0] = 0xE0 | ((value & 0x0F) as u8);
-					buf[1] = (value >> 4) as u8;
-					buf[2] = (value >> 12) as u8;
-					buf[3] = (value >> 20) as u8;
+					let word = 0xE0
+						| ((value & 0x0F) as u32)
+						| (((value >> 4) as u32) << 8);
+					let b = word.to_le_bytes();
+					buf[0] = b[0];
+					buf[1] = b[1];
+					buf[2] = b[2];
+					buf[3] = b[3];
 					4
 				},
 				_ => {

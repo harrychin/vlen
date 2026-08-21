@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2
+
+### Changed
+
+- Each prefix-varint encode form is now built as one little-endian
+  word and stored whole instead of byte-by-byte. Wire format
+  unchanged; bulk encoding of mixed-size streams is ~23% faster
+  (halving the gap to stream-vbyte, whose control-stream format
+  retains the remaining ~14% edge on interleaved sizes), and random
+  streams gain ~8%.
+
 ## 0.4.1
 
 ### Added
