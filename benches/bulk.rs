@@ -9,8 +9,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use vlen::{
-	bulk_decode, bulk_decode_u32, bulk_decode_u64, bulk_encode,
-	bulk_encode_u32, bulk_encode_u64,
+	bulk_decode, bulk_decode_i64, bulk_decode_u32, bulk_decode_u64,
+	bulk_encode, bulk_encode_i64, bulk_encode_u32, bulk_encode_u64,
 };
 
 const N: usize = 1024;
@@ -46,6 +46,58 @@ fn values(kind: &str) -> Vec<u32> {
 			_ => 0x1000_0000 + i,
 		})
 		.collect()
+}
+
+fn bench_bulk_i64_deltas(c: &mut Criterion) {
+	// Two delta-stream shapes: `smooth` has rare spikes (a steady
+	// signal sampled regularly, where runs of small deltas form), and
+	// `choppy` interleaves magnitudes per value (hostile to run
+	// detection; the documented case for the generic functions).
+	for (kind, spike_every) in [("smooth", 64), ("choppy", 4)] {
+		let values: Vec<i64> = (0..N as i64)
+			.map(|i| {
+				let mut x = (i as u32).wrapping_mul(0x9E37_79B9) ^ 0xBEEF;
+				x ^= x << 13;
+				x ^= x >> 17;
+				x ^= x << 5;
+				if x % spike_every == 0 {
+					(x % 0x40_0000) as i64 - 0x20_0000
+				} else {
+					(x % 63) as i64 - 31
+				}
+			})
+			.collect();
+		let mut buf = vec![0u8; N * 9];
+
+		c.bench_function(&format!("bulk_encode_i64/{kind}"), |b| {
+			b.iter(|| {
+				bulk_encode_i64(black_box(&mut buf), black_box(&values))
+					.unwrap()
+			})
+		});
+		c.bench_function(&format!("bulk_encode_generic_i64/{kind}"), |b| {
+			b.iter(|| {
+				bulk_encode(black_box(&mut buf), black_box(&values)).unwrap()
+			})
+		});
+
+		let encoded_len = bulk_encode(&mut buf, &values).unwrap();
+		let encoded = &buf[..encoded_len];
+		let mut decoded = vec![0i64; N];
+
+		c.bench_function(&format!("bulk_decode_i64/{kind}"), |b| {
+			b.iter(|| {
+				bulk_decode_i64(black_box(encoded), black_box(&mut decoded))
+					.unwrap()
+			})
+		});
+		c.bench_function(&format!("bulk_decode_generic_i64/{kind}"), |b| {
+			b.iter(|| {
+				bulk_decode(black_box(encoded), black_box(&mut decoded))
+					.unwrap()
+			})
+		});
+	}
 }
 
 fn bench_bulk_u64(c: &mut Criterion) {
@@ -118,5 +170,5 @@ fn bench_bulk(c: &mut Criterion) {
 	}
 }
 
-criterion_group!(benches, bench_bulk, bench_bulk_u64);
+criterion_group!(benches, bench_bulk, bench_bulk_u64, bench_bulk_i64_deltas);
 criterion_main!(benches);

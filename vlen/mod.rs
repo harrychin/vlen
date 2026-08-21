@@ -79,7 +79,8 @@ pub use encode::{
 };
 
 pub use bulk::{
-	DecodeIter, bulk_decode, bulk_decode_u32, bulk_decode_u64, bulk_encode,
+	DecodeIter, bulk_decode, bulk_decode_i32, bulk_decode_i64, bulk_decode_u32,
+	bulk_decode_u64, bulk_encode, bulk_encode_i32, bulk_encode_i64,
 	bulk_encode_u32, bulk_encode_u64, decode_iter,
 };
 

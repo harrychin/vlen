@@ -497,6 +497,36 @@ fn test_specialized_bulk_matches_generic() {
 }
 
 #[test]
+fn test_specialized_i64_bulk_matches_generic() {
+	arbtest(|u| {
+		let values: Vec<i64> = (0..u.arbitrary::<u8>()? as usize % 40)
+			.map(|_| match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+				0 => (u.arbitrary::<u8>().unwrap_or(0) as i64 % 64) - 32,
+				1 => {
+					(u.arbitrary::<u16>().unwrap_or(0) as i64 % 0x3F80) - 0x1FC0
+				},
+				_ => u.arbitrary::<i64>().unwrap_or(0),
+			})
+			.collect();
+
+		let mut generic = vec![0u8; values.len() * 9 + 1];
+		let generic_len = bulk_encode(&mut generic, &values).unwrap();
+		let mut specialized = vec![0u8; values.len() * 9 + 1];
+		let specialized_len =
+			bulk_encode_i64(&mut specialized, &values).unwrap();
+		assert_eq!(specialized_len, generic_len);
+		assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
+
+		let mut decoded = vec![0i64; values.len()];
+		let read =
+			bulk_decode_i64(&generic[..generic_len], &mut decoded).unwrap();
+		assert_eq!(read, generic_len);
+		assert_eq!(decoded, values);
+		Ok(())
+	});
+}
+
+#[test]
 fn test_specialized_u64_bulk_matches_generic() {
 	arbtest(|u| {
 		let values: Vec<u64> = (0..u.arbitrary::<u8>()? as usize % 40)

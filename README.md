@@ -72,11 +72,13 @@ produces the same bytes as `u32`, `u64`, or `u128`, and decodes at any
 width that can hold it — no cross-type surprises when a field grows.
 
 **Bulk operations that exploit your data's shape.** The specialized
-bulk functions detect runs of similarly-sized values and move them
-without per-value length arithmetic — up to 4x faster than the
-per-value loop on small-value streams, in portable safe Rust on every
-architecture. A `decode_iter` streaming iterator handles streams of
-unknown length:
+bulk functions for `u32`, `u64`, `i32`, and `i64` detect runs of
+similarly-sized values and move them without per-value length
+arithmetic — up to 4x faster than the per-value loop on small-value
+streams, and the signed variants are built for delta-encoded data
+(smooth delta streams decode ~1.8x faster than the generic loop) — in
+portable safe Rust on every architecture. A `decode_iter` streaming
+iterator handles streams of unknown length:
 
 ```rust
 use vlen::{bulk_encode, decode_iter};

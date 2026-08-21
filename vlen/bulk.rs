@@ -3,13 +3,14 @@
 //! All functions here produce and consume the canonical vlen byte
 //! stream — output is byte-for-byte identical to encoding each value
 //! individually, and any mix of the bulk and per-value APIs
-//! interoperates. The `u32`- and `u64`-specialized functions add SWAR
-//! fast paths that process runs of one-byte encodings eight at a time
-//! and runs of two-byte encodings four at a time; they are portable
-//! safe Rust, active on every architecture. Prefer them when your data
-//! leans toward small values; for adversarially mixed sizes the
-//! generic functions are a few percent faster because they skip the
-//! run detection.
+//! interoperates. The specialized functions for `u32`, `u64`, `i32`,
+//! and `i64` add SWAR fast paths that process runs of equal-length
+//! encodings several values at a time; they are portable safe Rust,
+//! active on every architecture. Prefer them whenever the data has
+//! runs of similarly-sized values (the signed variants shine on
+//! delta-encoded streams); for adversarially mixed sizes the generic
+//! functions are a few percent faster because they skip the run
+//! detection.
 
 use crate::decode::Decode;
 use crate::encode::Encode;
@@ -56,161 +57,227 @@ const TWO_BYTE_WANT: u64 = 0x0080_0080_0080_0080;
 const FOUR_BYTE_MASK: u64 = 0x0000_00F0_0000_00F0;
 const FOUR_BYTE_WANT: u64 = 0x0000_00E0_0000_00E0;
 
-/// Generates the specialized bulk codec for one unsigned width.
+/// Generates the window fast paths for one unsigned width.
 ///
 /// Both directions detect runs of equal-length encodings, whose
 /// boundaries are known in advance and therefore need no per-value
 /// branching: one- and two-byte runs move through SWAR lanes, and
 /// three- to five-byte runs use class-known constructions — a single
 /// full-width store or masked load per value with no length
-/// computation at all. Windows without a run fall back to the branchy
-/// scalar codec, which branch prediction serves best.
-macro_rules! bulk_specialized {
-	(
-		$(#[$enc_docs:meta])* $enc_name:ident,
-		$(#[$dec_docs:meta])* $dec_name:ident,
-		$ut:ident
-	) => {
-		$(#[$enc_docs])*
-		pub fn $enc_name(buf: &mut [u8], values: &[$ut]) -> Result<usize> {
+/// computation at all. Windows without a run return `None` and the
+/// caller falls back to the branchy scalar codec, which branch
+/// prediction serves best.
+macro_rules! window_run_fns {
+	($try_enc:ident, $try_dec:ident, $ut:ident) => {
+		/// Attempts the run fast paths on one eight-value window.
+		/// Returns the new byte offset after encoding all eight, or
+		/// `None` when the window holds no run (or the output lacks
+		/// scratch room) and the caller must encode it one value at
+		/// a time.
+		#[inline(always)]
+		fn $try_enc(
+			buf: &mut [u8],
+			offset: usize,
+			chunk: &[$ut; 8],
+		) -> Option<usize> {
 			// Verifies that all eight values sit in the class
 			// `[lo, lo + span)` with one or-reduction: values below
 			// `lo` wrap to huge, values at or beyond the class stay
 			// at `span` or more.
 			#[inline(always)]
-			fn in_class(chunk: &[$ut], lo: $ut, span: $ut) -> bool {
-				chunk
-					.iter()
-					.fold(0, |acc, &v| acc | v.wrapping_sub(lo))
-					< span
+			fn in_class(chunk: &[$ut; 8], lo: $ut, span: $ut) -> bool {
+				chunk.iter().fold(0, |acc, &v| acc | v.wrapping_sub(lo)) < span
 			}
 
+			// The two hottest classes get dedicated cheap gates;
+			// wider classes share one dispatch on the encoded size
+			// of the window's first and last values.
+			let first = chunk[0];
+			let last = chunk[7];
+			if (first | last) < 0x80 && in_class(chunk, 0, 0x80) {
+				// Eight one-byte values become one packed word.
+				let dst = buf.get_mut(offset..offset + 8)?;
+				let mut word = 0u64;
+				for (j, &v) in chunk.iter().enumerate() {
+					word |= (v as u64) << (8 * j);
+				}
+				dst.copy_from_slice(&word.to_le_bytes());
+				return Some(offset + 8);
+			}
+			if (first.wrapping_sub(0x80) | last.wrapping_sub(0x80)) < 0x3F80
+				&& in_class(chunk, 0x80, 0x3F80)
+			{
+				// Eight two-byte values as two packed words of four
+				// little-endian lanes.
+				let dst = buf.get_mut(offset..offset + 16)?;
+				let mut half = 0;
+				while half < 2 {
+					let mut word = 0u64;
+					let mut j = 0;
+					while j < 4 {
+						let v = chunk[half * 4 + j] as u64;
+						let lane = 0x80 | (v & 0x3F) | ((v >> 6) << 8);
+						word |= lane << (16 * j);
+						j += 1;
+					}
+					dst[half * 8..half * 8 + 8]
+						.copy_from_slice(&word.to_le_bytes());
+					half += 1;
+				}
+				return Some(offset + 16);
+			}
+			if first >= 0x4000 && first.encoded_size() == last.encoded_size() {
+				match first.encoded_size() {
+					3 if in_class(chunk, 0x4000, 0x1F_C000) => {
+						// One full-width store per value at a
+						// three-byte stride; the next store
+						// overwrites the scratch bytes.
+						let dst = buf.get_mut(offset..offset + 3 * 8 + 5)?;
+						let mut o = 0;
+						for &v in chunk {
+							let word = (((v >> 5) as u64) << 8)
+								| (0xC0 | ((v & 0x1F) as u64));
+							dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
+							o += 3;
+						}
+						return Some(offset + 3 * 8);
+					},
+					4 if in_class(chunk, 0x20_0000, 0xFE0_0000) => {
+						let dst = buf.get_mut(offset..offset + 4 * 8 + 4)?;
+						let mut o = 0;
+						for &v in chunk {
+							let word = (((v >> 4) as u64) << 8)
+								| (0xE0 | ((v & 0x0F) as u64));
+							dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
+							o += 4;
+						}
+						return Some(offset + 4 * 8);
+					},
+					5 if in_class(chunk, 0x1000_0000, 0xF000_0000) => {
+						let dst = buf.get_mut(offset..offset + 5 * 8 + 3)?;
+						let mut o = 0;
+						for &v in chunk {
+							let word = ((v as u64) << 8) | 0xF3;
+							dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
+							o += 5;
+						}
+						return Some(offset + 5 * 8);
+					},
+					_ => {},
+				}
+			}
+			None
+		}
+
+		/// Attempts the run fast paths at one stream position.
+		/// Returns how many values were written into `slots` and the
+		/// new byte offset, or `None` when no run starts here (or
+		/// fewer than eight bytes remain) and the caller must decode
+		/// one value at a time. Three-byte runs return `None` on
+		/// purpose: uniform runs predict perfectly, and their SWAR
+		/// lane math costs more than the branchy scalar path.
+		#[inline(always)]
+		fn $try_dec(
+			buf: &[u8],
+			offset: usize,
+			slots: &mut [$ut; 8],
+		) -> Option<(usize, usize)> {
+			let chunk = buf.get(offset..offset + 8)?;
+			let word = u64::from_le_bytes(chunk.try_into().unwrap());
+			// Dispatch on the first encoding's size class; each
+			// class runs at most one run test.
+			let b0 = (word & 0xFF) as u8;
+			if b0 < 0x80 {
+				if word & ONE_BYTE_RUN == 0 {
+					// Eight one-byte encodings.
+					for (slot, &b) in slots.iter_mut().zip(chunk) {
+						*slot = b as $ut;
+					}
+					return Some((8, offset + 8));
+				}
+			} else if b0 < 0xC0 {
+				if word & TWO_BYTE_MASK == TWO_BYTE_WANT {
+					// Four two-byte encodings: reassemble all four
+					// values inside 16-bit lanes at once.
+					let lo = word & 0x003F_003F_003F_003F;
+					let hi = (word >> 8) & 0x00FF_00FF_00FF_00FF;
+					let packed = (hi << 6) | lo;
+					slots[0] = (packed & 0xFFFF) as $ut;
+					slots[1] = ((packed >> 16) & 0xFFFF) as $ut;
+					slots[2] = ((packed >> 32) & 0xFFFF) as $ut;
+					slots[3] = (packed >> 48) as $ut;
+					return Some((4, offset + 8));
+				}
+			} else if (0xE0..0xF0).contains(&b0) {
+				if word & FOUR_BYTE_MASK == FOUR_BYTE_WANT {
+					// Two four-byte encodings in two 32-bit lanes:
+					// value bits sit above the prefix nibble.
+					let lane0 = word & 0xFFFF_FFFF;
+					let lane1 = word >> 32;
+					slots[0] = (((lane0 >> 8) << 4) | (lane0 & 0x0F)) as $ut;
+					slots[1] = (((lane1 >> 8) << 4) | (lane1 & 0x0F)) as $ut;
+					return Some((2, offset + 8));
+				}
+			} else if b0 >= 0xF0 {
+				// Binary length prefix: decode pairs of equal-length
+				// encodings with plain masked loads, no length
+				// arithmetic per value.
+				const WIDTH: usize = core::mem::size_of::<$ut>();
+				let len = ((b0 & 0x0F) as usize) + 2;
+				if len <= WIDTH + 1 {
+					let pair = buf.get(offset..offset + 2 * len)?;
+					if pair[len] == b0 && offset + len + 1 + WIDTH <= buf.len()
+					{
+						let payload = len - 1;
+						let mask = if payload >= WIDTH {
+							$ut::MAX
+						} else {
+							$ut::MAX >> ((WIDTH - payload) * 8)
+						};
+						let lo = $ut::from_le_bytes(
+							buf[offset + 1..offset + 1 + WIDTH]
+								.try_into()
+								.unwrap(),
+						);
+						let hi = $ut::from_le_bytes(
+							buf[offset + len + 1..offset + len + 1 + WIDTH]
+								.try_into()
+								.unwrap(),
+						);
+						slots[0] = lo & mask;
+						slots[1] = hi & mask;
+						return Some((2, offset + 2 * len));
+					}
+				}
+			}
+			None
+		}
+	};
+}
+
+window_run_fns!(try_encode_run_u32, try_decode_run_u32, u32);
+window_run_fns!(try_encode_run_u64, try_decode_run_u64, u64);
+
+/// Generates the specialized bulk codec for one unsigned width on top
+/// of its window run functions.
+macro_rules! bulk_unsigned {
+	(
+		$(#[$enc_docs:meta])* $enc_name:ident,
+		$(#[$dec_docs:meta])* $dec_name:ident,
+		$ut:ident, $try_enc:ident, $try_dec:ident
+	) => {
+		$(#[$enc_docs])*
+		pub fn $enc_name(buf: &mut [u8], values: &[$ut]) -> Result<usize> {
 			let mut offset = 0;
 			let mut i = 0;
 			while i < values.len() {
 				if let Some(chunk) = values.get(i..i + 8) {
-					// The two hottest classes get dedicated cheap gates;
-					// wider classes share one dispatch on the encoded
-					// size of the window's first and last values.
-					let first = chunk[0];
-					let last = chunk[7];
-					if (first | last) < 0x80
-						&& in_class(chunk, 0, 0x80)
+					let chunk: &[$ut; 8] = chunk.try_into().unwrap();
+					if let Some(new_offset) = $try_enc(buf, offset, chunk)
 					{
-						// Eight one-byte values in one step.
-						if let Some(dst) =
-							buf.get_mut(offset..offset + 8)
-						{
-							for (d, &v) in dst.iter_mut().zip(chunk) {
-								*d = v as u8;
-							}
-							offset += 8;
-							i += 8;
-							continue;
-						}
-					} else if (first.wrapping_sub(0x80)
-						| last.wrapping_sub(0x80)) < 0x3F80
-						&& in_class(chunk, 0x80, 0x3F80)
-					{
-						// Eight two-byte values as two packed words of
-						// four little-endian lanes.
-						if let Some(dst) =
-							buf.get_mut(offset..offset + 16)
-						{
-							let mut half = 0;
-							while half < 2 {
-								let mut word = 0u64;
-								let mut j = 0;
-								while j < 4 {
-									let v = chunk[half * 4 + j] as u64;
-									let lane = 0x80
-										| (v & 0x3F) | ((v >> 6) << 8);
-									word |= lane << (16 * j);
-									j += 1;
-								}
-								dst[half * 8..half * 8 + 8]
-									.copy_from_slice(
-										&word.to_le_bytes(),
-									);
-								half += 1;
-							}
-							offset += 16;
-							i += 8;
-							continue;
-						}
-					} else if first >= 0x4000
-						&& first.encoded_size() == last.encoded_size()
-					{
-						match first.encoded_size() {
-							3 if in_class(chunk, 0x4000, 0x1F_C000) => {
-								// One full-width store per value at a
-								// three-byte stride; the next store
-								// overwrites the scratch bytes.
-								if let Some(dst) = buf
-									.get_mut(offset..offset + 3 * 8 + 5)
-								{
-									let mut o = 0;
-									for &v in chunk {
-										let word = (((v >> 5) as u64)
-											<< 8) | (0xC0
-											| ((v & 0x1F) as u64));
-										dst[o..o + 8].copy_from_slice(
-											&word.to_le_bytes(),
-										);
-										o += 3;
-									}
-									offset += 3 * 8;
-									i += 8;
-									continue;
-								}
-							},
-							4 if in_class(
-								chunk, 0x20_0000, 0xFE0_0000,
-							) =>
-							{
-								if let Some(dst) = buf
-									.get_mut(offset..offset + 4 * 8 + 4)
-								{
-									let mut o = 0;
-									for &v in chunk {
-										let word = (((v >> 4) as u64)
-											<< 8) | (0xE0
-											| ((v & 0x0F) as u64));
-										dst[o..o + 8].copy_from_slice(
-											&word.to_le_bytes(),
-										);
-										o += 4;
-									}
-									offset += 4 * 8;
-									i += 8;
-									continue;
-								}
-							},
-							5 if in_class(
-								chunk,
-								0x1000_0000,
-								0xF000_0000,
-							) =>
-							{
-								if let Some(dst) = buf
-									.get_mut(offset..offset + 5 * 8 + 3)
-								{
-									let mut o = 0;
-									for &v in chunk {
-										let word =
-											((v as u64) << 8) | 0xF3;
-										dst[o..o + 8].copy_from_slice(
-											&word.to_le_bytes(),
-										);
-										o += 5;
-									}
-									offset += 5 * 8;
-									i += 8;
-									continue;
-								}
-							},
-							_ => {},
-						}
+						offset = new_offset;
+						i += 8;
+						continue;
 					}
 					// The window mixes size classes: encode it one
 					// value at a time so the failed checks are
@@ -233,99 +300,17 @@ macro_rules! bulk_specialized {
 			let mut offset = 0;
 			let mut i = 0;
 			while i < out.len() {
-				if let (Some(chunk), Some(slots)) =
-					(buf.get(offset..offset + 8), out.get_mut(i..i + 8))
-				{
-					let word = u64::from_le_bytes(chunk.try_into().unwrap());
-					// Dispatch on the first encoding's size class; each
-					// class runs at most one run test.
-					let b0 = (word & 0xFF) as u8;
-					if b0 < 0x80 {
-						if word & ONE_BYTE_RUN == 0 {
-							// Eight one-byte encodings.
-							for (slot, &b) in slots.iter_mut().zip(chunk) {
-								*slot = b as $ut;
-							}
-							offset += 8;
-							i += 8;
-							continue;
-						}
-					} else if b0 < 0xC0 {
-						if word & TWO_BYTE_MASK == TWO_BYTE_WANT {
-							// Four two-byte encodings: reassemble all
-							// four values inside 16-bit lanes at once.
-							let lo = word & 0x003F_003F_003F_003F;
-							let hi = (word >> 8) & 0x00FF_00FF_00FF_00FF;
-							let packed = (hi << 6) | lo;
-							slots[0] = (packed & 0xFFFF) as $ut;
-							slots[1] = ((packed >> 16) & 0xFFFF) as $ut;
-							slots[2] = ((packed >> 32) & 0xFFFF) as $ut;
-							slots[3] = (packed >> 48) as $ut;
-							offset += 8;
-							i += 4;
-							continue;
-						}
-					} else if (0xE0..0xF0).contains(&b0) {
-						if word & FOUR_BYTE_MASK == FOUR_BYTE_WANT {
-							// Two four-byte encodings in two 32-bit
-							// lanes: value bits sit above the prefix
-							// nibble.
-							let lane0 = word & 0xFFFF_FFFF;
-							let lane1 = word >> 32;
-							slots[0] = (((lane0 >> 8) << 4)
-								| (lane0 & 0x0F)) as $ut;
-							slots[1] = (((lane1 >> 8) << 4)
-								| (lane1 & 0x0F)) as $ut;
-							offset += 8;
-							i += 2;
-							continue;
-						}
-					} else if b0 >= 0xF0 {
-						// Binary length prefix: decode pairs of
-						// equal-length encodings with plain masked
-						// loads, no length arithmetic per value.
-						const WIDTH: usize = core::mem::size_of::<$ut>();
-						let len = ((b0 & 0x0F) as usize) + 2;
-						if len <= WIDTH + 1 {
-							if let Some(pair) =
-								buf.get(offset..offset + 2 * len)
-							{
-								if pair[len] == b0
-									&& offset + len + 1 + WIDTH
-										<= buf.len()
-								{
-									let payload = len - 1;
-									let mask = if payload >= WIDTH {
-										$ut::MAX
-									} else {
-										$ut::MAX
-											>> ((WIDTH - payload) * 8)
-									};
-									let lo = $ut::from_le_bytes(
-										buf[offset + 1
-											..offset + 1 + WIDTH]
-											.try_into()
-											.unwrap(),
-									);
-									let hi = $ut::from_le_bytes(
-										buf[offset + len + 1
-											..offset + len + 1 + WIDTH]
-											.try_into()
-											.unwrap(),
-									);
-									slots[0] = lo & mask;
-									slots[1] = hi & mask;
-									offset += 2 * len;
-									i += 2;
-									continue;
-								}
-							}
-						}
+				if let Some(slots) = out.get_mut(i..i + 8) {
+					let slots: &mut [$ut; 8] =
+						slots.try_into().unwrap();
+					if let Some((n, new_offset)) =
+						$try_dec(buf, offset, slots)
+					{
+						offset = new_offset;
+						i += n;
+						continue;
 					}
-					// No run at this position (three-byte runs land
-					// here on purpose: uniform runs predict perfectly,
-					// and their SWAR lane math costs more than the
-					// branchy scalar path): decode the next eight
+					// No run at this position: decode the next eight
 					// values one at a time so the failed checks are
 					// amortized across eight values.
 					for slot in slots {
@@ -347,7 +332,7 @@ macro_rules! bulk_specialized {
 	};
 }
 
-bulk_specialized! {
+bulk_unsigned! {
 	/// Encodes a slice of `u32` values into `buf`, returning the total
 	/// encoded length.
 	///
@@ -360,10 +345,10 @@ bulk_specialized! {
 	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
 	/// paths for runs of equal-length encodings.
 	bulk_decode_u32,
-	u32
+	u32, try_encode_run_u32, try_decode_run_u32
 }
 
-bulk_specialized! {
+bulk_unsigned! {
 	/// Encodes a slice of `u64` values into `buf`, returning the total
 	/// encoded length.
 	///
@@ -376,7 +361,131 @@ bulk_specialized! {
 	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
 	/// paths for runs of equal-length encodings.
 	bulk_decode_u64,
-	u64
+	u64, try_encode_run_u64, try_decode_run_u64
+}
+
+/// Generates the specialized bulk codec for a signed width: zigzag
+/// each window into its unsigned representation, reuse the unsigned
+/// run machinery, and map back on the way out. Delta-encoded streams
+/// are the sweet spot — small magnitudes land in the one- and
+/// two-byte run classes.
+macro_rules! bulk_signed {
+	(
+		$(#[$enc_docs:meta])* $enc_name:ident,
+		$(#[$dec_docs:meta])* $dec_name:ident,
+		$it:ident, $ut:ident, $try_enc:ident, $try_dec:ident
+	) => {
+		$(#[$enc_docs])*
+		pub fn $enc_name(buf: &mut [u8], values: &[$it]) -> Result<usize> {
+			#[inline(always)]
+			fn zigzag(v: $it) -> $ut {
+				((v >> (<$it>::BITS - 1)) as $ut) ^ ((v << 1) as $ut)
+			}
+
+			let mut offset = 0;
+			let mut i = 0;
+			while i < values.len() {
+				if let Some(chunk) = values.get(i..i + 8) {
+					// A window can only be a run if its first and
+					// last values encode at the same length; check
+					// that before paying for the full transform.
+					let z0 = zigzag(chunk[0]);
+					let z7 = zigzag(chunk[7]);
+					if z0.encoded_size() == z7.encoded_size() {
+						let mut mapped = [0; 8];
+						for (z, &v) in mapped.iter_mut().zip(chunk) {
+							*z = zigzag(v);
+						}
+						if let Some(new_offset) =
+							$try_enc(buf, offset, &mapped)
+						{
+							offset = new_offset;
+							i += 8;
+							continue;
+						}
+					}
+					for &value in chunk {
+						offset += value.encode(&mut buf[offset..])?;
+					}
+					i += 8;
+					continue;
+				}
+				offset += values[i].encode(&mut buf[offset..])?;
+				i += 1;
+			}
+			Ok(offset)
+		}
+
+		$(#[$dec_docs])*
+		pub fn $dec_name(buf: &[u8], out: &mut [$it]) -> Result<usize> {
+			let mut offset = 0;
+			let mut i = 0;
+			while i < out.len() {
+				if i + 8 <= out.len() {
+					let mut zigzag: [$ut; 8] = [0; 8];
+					if let Some((n, new_offset)) =
+						$try_dec(buf, offset, &mut zigzag)
+					{
+						for (slot, &z) in
+							out[i..i + n].iter_mut().zip(&zigzag[..n])
+						{
+							*slot = ((z >> 1) as $it)
+								^ (-((z & 1) as $it));
+						}
+						offset = new_offset;
+						i += n;
+						continue;
+					}
+					for slot in out[i..i + 8].iter_mut() {
+						let (value, len) = <$it>::decode(&buf[offset..])?;
+						*slot = value;
+						offset += len;
+					}
+					i += 8;
+					continue;
+				}
+				let (value, len) = <$it>::decode(&buf[offset..])?;
+				out[i] = value;
+				offset += len;
+				i += 1;
+			}
+			Ok(offset)
+		}
+	};
+}
+
+bulk_signed! {
+	/// Encodes a slice of `i32` values into `buf`, returning the total
+	/// encoded length.
+	///
+	/// Produces exactly the same bytes as [`bulk_encode`], with fast
+	/// paths for runs of equal-length encodings; small magnitudes
+	/// (delta streams) hit the fastest paths.
+	bulk_encode_i32,
+	/// Decodes exactly `out.len()` `i32` values from `buf`, returning
+	/// the number of bytes consumed.
+	///
+	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
+	/// paths for runs of equal-length encodings.
+	bulk_decode_i32,
+	i32, u32, try_encode_run_u32, try_decode_run_u32
+}
+
+bulk_signed! {
+	/// Encodes a slice of `i64` values into `buf`, returning the total
+	/// encoded length.
+	///
+	/// Produces exactly the same bytes as [`bulk_encode`], with fast
+	/// paths for runs of equal-length encodings; small magnitudes
+	/// (delta streams) hit the fastest paths.
+	bulk_encode_i64,
+	/// Decodes exactly `out.len()` `i64` values from `buf`, returning
+	/// the number of bytes consumed.
+	///
+	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
+	/// paths for runs of equal-length encodings.
+	bulk_decode_i64,
+	i64, u64, try_encode_run_u64, try_decode_run_u64
 }
 
 /// Returns an iterator that decodes consecutive values from `buf`.

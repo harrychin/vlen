@@ -392,3 +392,53 @@ fn invalid_prefix_wins_over_short_buffer() {
 		})
 	);
 }
+
+#[test]
+fn specialized_signed_bulk_matches_generic_bulk() {
+	// Delta-style signed streams: runs of small magnitudes (the
+	// zigzag one- and two-byte classes) mixed with every wider class.
+	let mut i32_values = Vec::new();
+	for i in 0..64i32 {
+		i32_values.push((i % 63) - 31);
+	}
+	for i in 0..64i32 {
+		i32_values.push(((i * 37) % 0x1F00) - 0xF80);
+	}
+	i32_values.extend([0, 1, -1, 0x40, -0x41, i32::MIN, i32::MAX]);
+	for i in 0..64i32 {
+		i32_values.push((i % 63) - 31);
+	}
+
+	let mut generic = vec![0u8; i32_values.len() * 5];
+	let generic_len = vlen::bulk_encode(&mut generic, &i32_values).unwrap();
+	let mut specialized = vec![0u8; i32_values.len() * 5];
+	let specialized_len =
+		vlen::bulk_encode_i32(&mut specialized, &i32_values).unwrap();
+	assert_eq!(specialized_len, generic_len);
+	assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
+
+	let mut decoded = vec![0i32; i32_values.len()];
+	let read =
+		vlen::bulk_decode_i32(&generic[..generic_len], &mut decoded).unwrap();
+	assert_eq!(read, generic_len);
+	assert_eq!(decoded, i32_values);
+
+	let i64_values: Vec<i64> = i32_values
+		.iter()
+		.map(|&v| v as i64)
+		.chain([i64::MIN, i64::MAX, -0x1_0000_0000])
+		.collect();
+	let mut generic = vec![0u8; i64_values.len() * 9];
+	let generic_len = vlen::bulk_encode(&mut generic, &i64_values).unwrap();
+	let mut specialized = vec![0u8; i64_values.len() * 9];
+	let specialized_len =
+		vlen::bulk_encode_i64(&mut specialized, &i64_values).unwrap();
+	assert_eq!(specialized_len, generic_len);
+	assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
+
+	let mut decoded = vec![0i64; i64_values.len()];
+	let read =
+		vlen::bulk_decode_i64(&generic[..generic_len], &mut decoded).unwrap();
+	assert_eq!(read, generic_len);
+	assert_eq!(decoded, i64_values);
+}
