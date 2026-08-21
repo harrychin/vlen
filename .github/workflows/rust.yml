@@ -75,3 +75,20 @@ jobs:
         run: cargo doc --all-features --no-deps
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
+
+  wasm:
+    name: wasm32-wasip1 (node WASI)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_WASM32_WASIP1_RUNNER: node --no-warnings ${{ github.workspace }}/ci/wasi-runner.mjs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - name: Test (portable paths)
+        run: cargo test --target wasm32-wasip1 --test contract_tests --test property_tests --test tests
+      - name: Test (simd128 kernels)
+        run: cargo test --target wasm32-wasip1 --features simd --test contract_tests --test property_tests --test tests
+        env:
+          RUSTFLAGS: -C target-feature=+simd128

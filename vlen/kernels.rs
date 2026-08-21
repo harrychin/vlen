@@ -78,3 +78,68 @@ pub(crate) fn four_byte_lanes(bytes: &[u8; 16], lanes: &mut [u32; 4]) {
 		_mm_storeu_si128(lanes.as_mut_ptr().cast(), value);
 	}
 }
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn one_byte_lanes(bytes: &[u8; 8], lanes: &mut [u16; 8]) {
+	use core::arch::aarch64::*;
+	// SAFETY: NEON is a baseline feature of every aarch64 target, and
+	// the load/store pointers come from array references valid for
+	// exactly the accessed widths.
+	unsafe {
+		let v = vld1_u8(bytes.as_ptr());
+		vst1q_u16(lanes.as_mut_ptr(), vmovl_u8(v));
+	}
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn one_byte_lanes(bytes: &[u8; 8], lanes: &mut [u16; 8]) {
+	use core::arch::x86_64::*;
+	// SAFETY: every intrinsic here is SSE2, a baseline feature of the
+	// x86_64 target; the pointers come from array references valid
+	// for exactly the accessed widths.
+	unsafe {
+		let v = _mm_loadl_epi64(bytes.as_ptr().cast());
+		let wide = _mm_unpacklo_epi8(v, _mm_setzero_si128());
+		_mm_storeu_si128(lanes.as_mut_ptr().cast(), wide);
+	}
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub(crate) fn one_byte_lanes(bytes: &[u8; 8], lanes: &mut [u16; 8]) {
+	use core::arch::wasm32::*;
+	// SAFETY: simd128 is statically enabled (this function only
+	// compiles under cfg(target_feature = "simd128")), and the
+	// pointers come from array references valid for exactly the
+	// accessed widths.
+	unsafe {
+		let wide = u16x8_load_extend_u8x8(bytes.as_ptr());
+		v128_store(lanes.as_mut_ptr().cast(), wide);
+	}
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub(crate) fn two_byte_lanes(bytes: &[u8; 16], lanes: &mut [u16; 8]) {
+	use core::arch::wasm32::*;
+	// SAFETY: as above.
+	unsafe {
+		let v = v128_load(bytes.as_ptr().cast());
+		let payload = u16x8_shr(v, 8);
+		let low = v128_and(v, u16x8_splat(0x003F));
+		let value = v128_or(u16x8_shl(payload, 6), low);
+		v128_store(lanes.as_mut_ptr().cast(), value);
+	}
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub(crate) fn four_byte_lanes(bytes: &[u8; 16], lanes: &mut [u32; 4]) {
+	use core::arch::wasm32::*;
+	// SAFETY: as above.
+	unsafe {
+		let v = v128_load(bytes.as_ptr().cast());
+		let value = v128_or(
+			u32x4_shl(u32x4_shr(v, 8), 4),
+			v128_and(v, u32x4_splat(0x0F)),
+		);
+		v128_store(lanes.as_mut_ptr().cast(), value);
+	}
+}

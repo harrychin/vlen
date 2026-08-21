@@ -63,7 +63,11 @@ pub mod encode;
 mod error;
 #[cfg(all(
 	feature = "simd",
-	any(target_arch = "aarch64", target_arch = "x86_64")
+	any(
+		target_arch = "aarch64",
+		target_arch = "x86_64",
+		all(target_arch = "wasm32", target_feature = "simd128")
+	)
 ))]
 #[allow(unsafe_code)]
 mod kernels;

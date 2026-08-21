@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Comparison against other integer encodings.
 //!
 //! Methodology: every codec is driven through its fastest public

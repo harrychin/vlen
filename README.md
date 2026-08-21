@@ -108,7 +108,7 @@ allocation-free either way, hostile input rejected with errors.
 |---------|------|
 | `alloc` | `Vec` conveniences: `encode_to_vec`, `bulk_encode_to_vec`, `bulk_decode_values` |
 | `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
-| `simd`  | Native NEON/SSE2 kernels for the bulk run fast paths (~15% faster two- and four-byte runs; adds two audited unsafe blocks) |
+| `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs; a handful of audited load/store unsafe blocks) |
 | `full`  | Everything above |
 
 MSRV: **1.85**. Tested in CI on x86_64 and aarch64, stable and MSRV,

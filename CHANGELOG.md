@@ -7,11 +7,19 @@
 - Sixteen-byte run windows for two- and four-byte decode: eight
   two-byte or four four-byte encodings per step in portable safe
   Rust, roughly 20% faster than the previous eight-byte windows.
-- An opt-in `simd` feature (also part of `full`) with audited NEON
-  (aarch64) and SSE2 (x86_64) kernels for those lane reassemblies,
-  worth about another 15%. Both instruction sets are baseline for
-  their targets, so there is no runtime detection; default builds
-  still contain no unsafe code.
+- An opt-in `simd` feature (also part of `full`) with audited native
+  kernels for the run lane reassemblies: NEON (aarch64), SSE2
+  (x86_64), and simd128 (wasm32 with `+simd128`), covering one-,
+  two-, and four-byte decode runs - about 15-19% on those paths.
+  Every instruction set used is baseline for its target (simd128 is
+  compile-time gated), so there is no runtime detection; default
+  builds still contain no unsafe code. The full suite runs on all
+  three architectures in CI, kernels on and off.
+- Two- and four-byte encode runs now serialize a lane array whose
+  little-endian bytes are exactly the wire encoding - safe code the
+  autovectorizer turns into SIMD on every platform, 41% and 30%
+  faster respectively, and the four-byte path no longer needs
+  scratch bytes.
 
 - Run-accelerated decoding iterators: `decode_iter_u32`, `decode_iter_u64`,
   `decode_iter_i32`, and `decode_iter_i64` refill an internal window

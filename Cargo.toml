@@ -31,11 +31,6 @@ serde = { version = "1.0", optional = true, default-features = false }
 base64 = { version = "0.23", optional = true, default-features = false }
 
 [dev-dependencies]
-criterion = "0.8"
-integer-encoding = "4.1"
-prost = "0.14"
-vint64 = "1.0"
-stream-vbyte = "0.4"
 arbtest = "0.3"
 rstest = "0.26"
 serde = { version = "1.0", features = ["derive"] }
@@ -52,3 +47,11 @@ full = ["alloc", "serde", "simd"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# Benchmark-only dependencies; several do not build for wasm targets.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.8"
+integer-encoding = "4.1"
+prost = "0.14"
+vint64 = "1.0"
+stream-vbyte = "0.4"

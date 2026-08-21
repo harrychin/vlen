@@ -64,14 +64,22 @@ const FOUR_BYTE_WANT: u64 = 0x0000_00E0_0000_00E0;
 fn two_byte_lanes(bytes: &[u8; 16], lanes: &mut [u16; 8]) {
 	#[cfg(all(
 		feature = "simd",
-		any(target_arch = "aarch64", target_arch = "x86_64")
+		any(
+			target_arch = "aarch64",
+			target_arch = "x86_64",
+			all(target_arch = "wasm32", target_feature = "simd128")
+		)
 	))]
 	{
 		crate::kernels::two_byte_lanes(bytes, lanes);
 	}
 	#[cfg(not(all(
 		feature = "simd",
-		any(target_arch = "aarch64", target_arch = "x86_64")
+		any(
+			target_arch = "aarch64",
+			target_arch = "x86_64",
+			all(target_arch = "wasm32", target_feature = "simd128")
+		)
 	)))]
 	{
 		let mut half = 0;
@@ -98,14 +106,22 @@ fn two_byte_lanes(bytes: &[u8; 16], lanes: &mut [u16; 8]) {
 fn four_byte_lanes(bytes: &[u8; 16], lanes: &mut [u32; 4]) {
 	#[cfg(all(
 		feature = "simd",
-		any(target_arch = "aarch64", target_arch = "x86_64")
+		any(
+			target_arch = "aarch64",
+			target_arch = "x86_64",
+			all(target_arch = "wasm32", target_feature = "simd128")
+		)
 	))]
 	{
 		crate::kernels::four_byte_lanes(bytes, lanes);
 	}
 	#[cfg(not(all(
 		feature = "simd",
-		any(target_arch = "aarch64", target_arch = "x86_64")
+		any(
+			target_arch = "aarch64",
+			target_arch = "x86_64",
+			all(target_arch = "wasm32", target_feature = "simd128")
+		)
 	)))]
 	{
 		let mut i = 0;
@@ -168,22 +184,17 @@ macro_rules! window_run_fns {
 			if (first.wrapping_sub(0x80) | last.wrapping_sub(0x80)) < 0x3F80
 				&& in_class(chunk, 0x80, 0x3F80)
 			{
-				// Eight two-byte values as two packed words of four
-				// little-endian lanes.
+				// Eight two-byte values: each 16-bit lane's
+				// little-endian bytes are exactly the encoding, so
+				// the lane array serializes as one contiguous block.
 				let dst = buf.get_mut(offset..offset + 16)?;
-				let mut half = 0;
-				while half < 2 {
-					let mut word = 0u64;
-					let mut j = 0;
-					while j < 4 {
-						let v = chunk[half * 4 + j] as u64;
-						let lane = 0x80 | (v & 0x3F) | ((v >> 6) << 8);
-						word |= lane << (16 * j);
-						j += 1;
-					}
-					dst[half * 8..half * 8 + 8]
-						.copy_from_slice(&word.to_le_bytes());
-					half += 1;
+				let mut lanes = [0u16; 8];
+				for (lane, &v) in lanes.iter_mut().zip(chunk) {
+					*lane =
+						0x80 | ((v & 0x3F) as u16) | (((v >> 6) as u16) << 8);
+				}
+				for (pair, &lane) in dst.chunks_exact_mut(2).zip(&lanes) {
+					pair.copy_from_slice(&lane.to_le_bytes());
 				}
 				return Some(offset + 16);
 			}
@@ -204,15 +215,21 @@ macro_rules! window_run_fns {
 						return Some(offset + 3 * 8);
 					},
 					4 if in_class(chunk, 0x20_0000, 0xFE0_0000) => {
-						let dst = buf.get_mut(offset..offset + 4 * 8 + 4)?;
-						let mut o = 0;
-						for &v in chunk {
-							let word = (((v >> 4) as u64) << 8)
-								| (0xE0 | ((v & 0x0F) as u64));
-							dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
-							o += 4;
+						// Each 32-bit lane's little-endian bytes are
+						// exactly the four-byte encoding; no scratch
+						// bytes needed.
+						let dst = buf.get_mut(offset..offset + 32)?;
+						let mut lanes = [0u32; 8];
+						for (lane, &v) in lanes.iter_mut().zip(chunk) {
+							*lane = 0xE0
+								| ((v & 0x0F) as u32)
+								| (((v >> 4) as u32) << 8);
 						}
-						return Some(offset + 4 * 8);
+						for (quad, &lane) in dst.chunks_exact_mut(4).zip(&lanes)
+						{
+							quad.copy_from_slice(&lane.to_le_bytes());
+						}
+						return Some(offset + 32);
 					},
 					5 if in_class(chunk, 0x1000_0000, 0xF000_0000) => {
 						let dst = buf.get_mut(offset..offset + 5 * 8 + 3)?;
@@ -251,8 +268,42 @@ macro_rules! window_run_fns {
 			if b0 < 0x80 {
 				if word & ONE_BYTE_RUN == 0 {
 					// Eight one-byte encodings.
-					for (slot, &b) in slots.iter_mut().zip(chunk) {
-						*slot = b as $ut;
+					#[cfg(all(
+						feature = "simd",
+						any(
+							target_arch = "aarch64",
+							target_arch = "x86_64",
+							all(
+								target_arch = "wasm32",
+								target_feature = "simd128"
+							)
+						)
+					))]
+					{
+						let mut lanes = [0u16; 8];
+						crate::kernels::one_byte_lanes(
+							chunk.try_into().unwrap(),
+							&mut lanes,
+						);
+						for (slot, &lane) in slots.iter_mut().zip(&lanes) {
+							*slot = lane as $ut;
+						}
+					}
+					#[cfg(not(all(
+						feature = "simd",
+						any(
+							target_arch = "aarch64",
+							target_arch = "x86_64",
+							all(
+								target_arch = "wasm32",
+								target_feature = "simd128"
+							)
+						)
+					)))]
+					{
+						for (slot, &b) in slots.iter_mut().zip(chunk) {
+							*slot = b as $ut;
+						}
 					}
 					return Some((8, offset + 8));
 				}
