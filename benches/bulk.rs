@@ -20,6 +20,8 @@ fn values(kind: &str) -> Vec<u32> {
 		.map(|i| match kind {
 			"small" => i % 0x80,
 			"two_byte" => 0x80 + (i * 37) % 0x3F80,
+			"three_byte" => 0x4000 + (i * 97) % 0x1F_C000,
+			"four_byte" => 0x20_0000 + (i * 997) % 0xFE0_0000,
 			"mixed" => match i % 4 {
 				0 => i,
 				1 => 1000 + i,
@@ -73,7 +75,15 @@ fn bench_bulk_u64(c: &mut Criterion) {
 }
 
 fn bench_bulk(c: &mut Criterion) {
-	for kind in ["small", "two_byte", "mixed", "random", "large"] {
+	for kind in [
+		"small",
+		"two_byte",
+		"three_byte",
+		"four_byte",
+		"mixed",
+		"random",
+		"large",
+	] {
 		let values = values(kind);
 		let mut buf = vec![0u8; N * 5];
 

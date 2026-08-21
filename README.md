@@ -81,19 +81,23 @@ All bulk functions produce and consume the canonical byte stream —
 output is byte-for-byte identical to encoding each value individually,
 and the bulk and per-value APIs interoperate freely. The specialized
 `bulk_encode_u32`/`bulk_decode_u32` and `bulk_encode_u64`/
-`bulk_decode_u64` add portable SWAR fast paths that process runs of
-one-byte encodings eight at a time and runs of two-byte encodings four
-at a time; prefer them when your data leans toward small values.
+`bulk_decode_u64` detect runs of equal-length encodings — whose value
+boundaries are known in advance — and move them with SWAR lanes or
+class-known single stores and masked loads, in portable safe Rust.
+Prefer them whenever your data has runs of similarly-sized values;
+only adversarially interleaved sizes favor the generic functions.
 
 Indicative numbers for 1,024 values (Apple M-series, `--quick`
 criterion run — measure on your own hardware):
 
-| Distribution   | specialized vs generic encode | specialized vs generic decode |
-|----------------|------------------------------:|------------------------------:|
-| all one-byte   | **~4x faster**                | **~5x faster**                |
-| all two-byte   | **~1.4x faster**              | **~4x faster**                |
-| all 5-byte     | ~1.1x slower                  | **1.5x faster**               |
-| mixed / random | ~1.1-1.3x slower              | ~1.1-1.3x slower              |
+| Distribution    | specialized vs generic encode | specialized vs generic decode |
+|-----------------|------------------------------:|------------------------------:|
+| all one-byte    | **~4x faster**                | **~4x faster**                |
+| all two-byte    | **~1.2x faster**              | **~3.7x faster**              |
+| all three-byte  | **~1.5x faster**              | ~1.2x slower                  |
+| all four-byte   | **~1.7x faster**              | **~2.4x faster**              |
+| all five-byte   | **~3.5x faster**              | **~2x faster**                |
+| mixed / random  | ~1.2-1.4x slower              | ~1.1-1.4x slower              |
 
 ### Performance notes
 

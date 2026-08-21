@@ -213,6 +213,17 @@ fn specialized_u32_bulk_matches_generic_bulk() {
 	}
 	values.extend([1, 0x4000, 2]);
 	for i in 0..64u32 {
+		values.push(0x4000 + (i * 97) % 0x1F_C000);
+	}
+	values.extend([5, u32::MAX]);
+	for i in 0..64u32 {
+		values.push(0x20_0000 + (i * 997) % 0xFE0_0000);
+	}
+	for i in 0..64u32 {
+		values.push(0x1000_0000 + (i * 9973) % 0xF000_0000);
+	}
+	values.extend([7, 0x1234]);
+	for i in 0..64u32 {
 		values.push(i % 0x50);
 	}
 
@@ -257,6 +268,19 @@ fn specialized_u64_bulk_matches_generic_bulk() {
 		u64::MAX,
 		0,
 	]);
+	for i in 0..32u64 {
+		values.push(0x4000 + (i * 173) % 0x1F_C000);
+	}
+	for i in 0..32u64 {
+		values.push(0x1000_0000 + (i * 9973) % 0xF000_0000);
+	}
+	// Runs of wide binary-prefix encodings (six and nine bytes).
+	for i in 0..32u64 {
+		values.push(0x1_0000_0000 + i * 0x100);
+	}
+	for i in 0..32u64 {
+		values.push(u64::MAX - i * 0x1_0000);
+	}
 	for i in 0..32u64 {
 		values.push(i % 0x50);
 	}
