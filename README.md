@@ -79,20 +79,21 @@ assert_eq!(decoded?, values);
 
 All bulk functions produce and consume the canonical byte stream —
 output is byte-for-byte identical to encoding each value individually,
-and the bulk and per-value APIs interoperate freely. The
-`u32`-specialized `bulk_encode_u32`/`bulk_decode_u32` add a portable
-SWAR fast path that processes runs of one-byte encodings eight at a
-time; prefer them when your data is predominantly small values.
+and the bulk and per-value APIs interoperate freely. The specialized
+`bulk_encode_u32`/`bulk_decode_u32` and `bulk_encode_u64`/
+`bulk_decode_u64` add portable SWAR fast paths that process runs of
+one-byte encodings eight at a time and runs of two-byte encodings four
+at a time; prefer them when your data leans toward small values.
 
 Indicative numbers for 1,024 values (Apple M-series, `--quick`
 criterion run — measure on your own hardware):
 
-| Distribution | specialized vs generic encode | specialized vs generic decode |
-|--------------|------------------------------:|------------------------------:|
-| all < 128    | **4.4x faster**               | **5.3x faster**               |
-| all 5-byte   | ~1.1x slower                  | **1.5x faster**               |
-| mixed sizes  | ~1.2x slower                  | ~1.2x slower                  |
-| random sizes | ~1.1x slower                  | ~1.1x slower                  |
+| Distribution   | specialized vs generic encode | specialized vs generic decode |
+|----------------|------------------------------:|------------------------------:|
+| all one-byte   | **~4x faster**                | **~5x faster**                |
+| all two-byte   | **~1.4x faster**              | **~4x faster**                |
+| all 5-byte     | ~1.1x slower                  | **1.5x faster**               |
+| mixed / random | ~1.1-1.3x slower              | ~1.1-1.3x slower              |
 
 ### Performance notes
 
@@ -110,6 +111,17 @@ vlen is sensitive to inlining. If encode/decode shows up in your
 profiles, build with `lto = "thin"` (or `"fat"`) and consider
 `codegen-units = 1` in your release profile; `-C target-cpu=native`
 helps the SWAR bulk paths.
+
+There are no shuffle-based SIMD kernels, deliberately: with an inline
+self-delimiting varint, discovering where each value starts requires
+reading the previous value's first byte, so wide shuffles cannot
+bypass the boundary chain the way they can for formats with a separate
+control stream (group varint / stream-vbyte) or per-byte continuation
+bits (LEB128). vlen trades that away for the fastest scalar and
+streaming decode; the SWAR run paths recover batch speed exactly where
+boundaries are uniform and therefore known in advance. If your workload
+is columnar bulk u32 compression above all else, a control-stream
+format like stream-vbyte is the better tool.
 
 ### Comparison with other encodings
 

@@ -3,9 +3,13 @@
 //! All functions here produce and consume the canonical vlen byte
 //! stream — output is byte-for-byte identical to encoding each value
 //! individually, and any mix of the bulk and per-value APIs
-//! interoperates. The `u32`-specialized functions add a SWAR fast path
-//! that processes runs of one-byte encodings eight at a time; it is
-//! portable safe Rust, active on every architecture.
+//! interoperates. The `u32`- and `u64`-specialized functions add SWAR
+//! fast paths that process runs of one-byte encodings eight at a time
+//! and runs of two-byte encodings four at a time; they are portable
+//! safe Rust, active on every architecture. Prefer them when your data
+//! leans toward small values; for adversarially mixed sizes the
+//! generic functions are a few percent faster because they skip the
+//! run detection.
 
 use crate::decode::Decode;
 use crate::encode::Encode;
@@ -41,84 +45,187 @@ pub fn bulk_decode<T: Decode>(buf: &[u8], out: &mut [T]) -> Result<usize> {
 	Ok(offset)
 }
 
-/// Encodes a slice of `u32` values into `buf`, returning the total
-/// encoded length.
-///
-/// Produces exactly the same bytes as [`bulk_encode`], with a fast path
-/// that emits runs of eight one-byte encodings at once.
-pub fn bulk_encode_u32(buf: &mut [u8], values: &[u32]) -> Result<usize> {
-	let mut offset = 0;
-	let mut i = 0;
-	while i < values.len() {
-		// Fast path: eight one-byte values become eight bytes.
-		if let (Some(chunk), Some(dst)) =
-			(values.get(i..i + 8), buf.get_mut(offset..offset + 8))
-		{
-			if chunk.iter().fold(0, |acc, &v| acc | v) < 0x80 {
-				for (d, &v) in dst.iter_mut().zip(chunk) {
-					*d = v as u8;
+/// Every one-byte encoding has its top bit clear.
+const ONE_BYTE_RUN: u64 = 0x8080_8080_8080_8080;
+/// Two-byte encodings start `10xxxxxx`: these masks test the top two
+/// bits of the four even-position bytes in a window at once.
+const TWO_BYTE_MASK: u64 = 0x00C0_00C0_00C0_00C0;
+const TWO_BYTE_WANT: u64 = 0x0080_0080_0080_0080;
+
+/// Generates the specialized bulk codec for one unsigned width, with
+/// SWAR fast paths for runs of one-byte encodings (eight values per
+/// step) and two-byte encodings (four values per step).
+macro_rules! bulk_specialized {
+	(
+		$(#[$enc_docs:meta])* $enc_name:ident,
+		$(#[$dec_docs:meta])* $dec_name:ident,
+		$ut:ident
+	) => {
+		$(#[$enc_docs])*
+		pub fn $enc_name(buf: &mut [u8], values: &[$ut]) -> Result<usize> {
+			let mut offset = 0;
+			let mut i = 0;
+			while i < values.len() {
+				if let Some(chunk) = values.get(i..i + 8) {
+					// The first and last elements gate the run checks:
+					// a window can only be a uniform run of some class
+					// if both belong to that class, so windows that
+					// obviously cannot match skip the reductions.
+					let first = chunk[0];
+					let last = chunk[7];
+					if (first | last) < 0x80
+						&& chunk.iter().fold(0, |acc, &v| acc | v) < 0x80
+					{
+						// Eight one-byte values become eight bytes.
+						if let Some(dst) =
+							buf.get_mut(offset..offset + 8)
+						{
+							for (d, &v) in dst.iter_mut().zip(chunk) {
+								*d = v as u8;
+							}
+							offset += 8;
+							i += 8;
+							continue;
+						}
+					} else if (first.wrapping_sub(0x80)
+						| last.wrapping_sub(0x80)) < 0x3F80
+						&& chunk
+							.iter()
+							.fold(0, |acc, &v| acc | v.wrapping_sub(0x80))
+							< 0x3F80
+					{
+						// One reduction checks both bounds: values
+						// below 0x80 wrap to huge, values at or above
+						// 0x4000 stay at 0x3F80 or more.
+						// Eight two-byte values become two packed
+						// words of four little-endian lanes each.
+						if let Some(dst) =
+							buf.get_mut(offset..offset + 16)
+						{
+							let mut half = 0;
+							while half < 2 {
+								let mut word = 0u64;
+								let mut j = 0;
+								while j < 4 {
+									let v = chunk[half * 4 + j] as u64;
+									let lane = 0x80
+										| (v & 0x3F) | ((v >> 6) << 8);
+									word |= lane << (16 * j);
+									j += 1;
+								}
+								dst[half * 8..half * 8 + 8]
+									.copy_from_slice(&word.to_le_bytes());
+								half += 1;
+							}
+							offset += 16;
+							i += 8;
+							continue;
+						}
+					}
+					// The window mixes size classes: encode it one
+					// value at a time so the failed checks are
+					// amortized across eight values.
+					for &value in chunk {
+						offset += value.encode(&mut buf[offset..])?;
+					}
+					i += 8;
+					continue;
 				}
-				offset += 8;
-				i += 8;
-				continue;
+				// Tail shorter than a window.
+				offset += values[i].encode(&mut buf[offset..])?;
+				i += 1;
 			}
-			// The window holds a multi-byte value: encode the whole
-			// window one value at a time so the failed check is
-			// amortized across eight values.
-			for &value in chunk {
-				offset += value.encode(&mut buf[offset..])?;
-			}
-			i += 8;
-			continue;
+			Ok(offset)
 		}
-		// Tail shorter than a window.
-		offset += values[i].encode(&mut buf[offset..])?;
-		i += 1;
-	}
-	Ok(offset)
+
+		$(#[$dec_docs])*
+		pub fn $dec_name(buf: &[u8], out: &mut [$ut]) -> Result<usize> {
+			let mut offset = 0;
+			let mut i = 0;
+			while i < out.len() {
+				if let (Some(chunk), Some(slots)) =
+					(buf.get(offset..offset + 8), out.get_mut(i..i + 8))
+				{
+					let word = u64::from_le_bytes(chunk.try_into().unwrap());
+					if word & ONE_BYTE_RUN == 0 {
+						// Eight one-byte encodings.
+						for (slot, &b) in slots.iter_mut().zip(chunk) {
+							*slot = b as $ut;
+						}
+						offset += 8;
+						i += 8;
+						continue;
+					}
+					if word & TWO_BYTE_MASK == TWO_BYTE_WANT {
+						// Four two-byte encodings: reassemble all four
+						// values inside 16-bit lanes at once.
+						let lo = word & 0x003F_003F_003F_003F;
+						let hi = (word >> 8) & 0x00FF_00FF_00FF_00FF;
+						let packed = (hi << 6) | lo;
+						slots[0] = (packed & 0xFFFF) as $ut;
+						slots[1] = ((packed >> 16) & 0xFFFF) as $ut;
+						slots[2] = ((packed >> 32) & 0xFFFF) as $ut;
+						slots[3] = (packed >> 48) as $ut;
+						offset += 8;
+						i += 4;
+						continue;
+					}
+					// The window holds larger encodings: decode the
+					// next eight values one at a time so the failed
+					// checks are amortized across eight values.
+					for slot in slots {
+						let (value, len) = <$ut>::decode(&buf[offset..])?;
+						*slot = value;
+						offset += len;
+					}
+					i += 8;
+					continue;
+				}
+				// Tail shorter than a window.
+				let (value, len) = <$ut>::decode(&buf[offset..])?;
+				out[i] = value;
+				offset += len;
+				i += 1;
+			}
+			Ok(offset)
+		}
+	};
 }
 
-/// Decodes exactly `out.len()` `u32` values from `buf`, returning the
-/// number of bytes consumed.
-///
-/// Accepts exactly the streams [`bulk_decode`] accepts, with a fast
-/// path that consumes runs of eight one-byte encodings at once.
-pub fn bulk_decode_u32(buf: &[u8], out: &mut [u32]) -> Result<usize> {
-	let mut offset = 0;
-	let mut i = 0;
-	while i < out.len() {
-		// Fast path: eight bytes with clear continuation bits are
-		// eight one-byte encodings.
-		if let (Some(chunk), Some(slots)) =
-			(buf.get(offset..offset + 8), out.get_mut(i..i + 8))
-		{
-			let word = u64::from_le_bytes(chunk.try_into().unwrap());
-			if word & 0x8080_8080_8080_8080 == 0 {
-				for (slot, &b) in slots.iter_mut().zip(chunk) {
-					*slot = b as u32;
-				}
-				offset += 8;
-				i += 8;
-				continue;
-			}
-			// The window holds a multi-byte encoding: decode the next
-			// eight values one at a time so the failed check is
-			// amortized across eight values.
-			for slot in slots {
-				let (value, len) = u32::decode(&buf[offset..])?;
-				*slot = value;
-				offset += len;
-			}
-			i += 8;
-			continue;
-		}
-		// Tail shorter than a window.
-		let (value, len) = u32::decode(&buf[offset..])?;
-		out[i] = value;
-		offset += len;
-		i += 1;
-	}
-	Ok(offset)
+bulk_specialized! {
+	/// Encodes a slice of `u32` values into `buf`, returning the total
+	/// encoded length.
+	///
+	/// Produces exactly the same bytes as [`bulk_encode`], with SWAR
+	/// fast paths that emit runs of one-byte encodings eight at a time
+	/// and runs of two-byte encodings four at a time.
+	bulk_encode_u32,
+	/// Decodes exactly `out.len()` `u32` values from `buf`, returning
+	/// the number of bytes consumed.
+	///
+	/// Accepts exactly the streams [`bulk_decode`] accepts, with SWAR
+	/// fast paths that consume runs of one-byte encodings eight at a
+	/// time and runs of two-byte encodings four at a time.
+	bulk_decode_u32,
+	u32
+}
+
+bulk_specialized! {
+	/// Encodes a slice of `u64` values into `buf`, returning the total
+	/// encoded length.
+	///
+	/// Produces exactly the same bytes as [`bulk_encode`], with SWAR
+	/// fast paths that emit runs of one-byte encodings eight at a time
+	/// and runs of two-byte encodings four at a time.
+	bulk_encode_u64,
+	/// Decodes exactly `out.len()` `u64` values from `buf`, returning
+	/// the number of bytes consumed.
+	///
+	/// Accepts exactly the streams [`bulk_decode`] accepts, with SWAR
+	/// fast paths that consume runs of one-byte encodings eight at a
+	/// time and runs of two-byte encodings four at a time.
+	bulk_decode_u64,
+	u64
 }
 
 /// Returns an iterator that decodes consecutive values from `buf`.

@@ -7,8 +7,8 @@
 //! byte-for-byte compatible with the per-value scalar codec.
 
 use vlen::{
-	Decode, Encode, Error, bulk_decode, bulk_decode_u32, bulk_encode,
-	bulk_encode_u32, decode_iter,
+	Decode, Encode, Error, bulk_decode, bulk_decode_u32, bulk_decode_u64,
+	bulk_encode, bulk_encode_u32, bulk_encode_u64, decode_iter,
 };
 
 #[test]
@@ -200,13 +200,18 @@ fn bulk_decode_of_truncated_input_is_an_error() {
 
 #[test]
 fn specialized_u32_bulk_matches_generic_bulk() {
-	// Mixed sizes, including long runs of one-byte values that hit the
-	// fast path, must produce canonical bytes and round-trip.
+	// Mixed sizes, including long runs of one-byte and two-byte values
+	// that hit the fast paths, must produce canonical bytes and
+	// round-trip.
 	let mut values = Vec::new();
 	for i in 0..64u32 {
 		values.push(i % 0x50);
 	}
 	values.extend([0x80, 0x3FFF, 0x4000, 0x1FFFFF, 0x10000000, u32::MAX]);
+	for i in 0..64u32 {
+		values.push(0x80 + (i * 37) % 0x3F80);
+	}
+	values.extend([1, 0x4000, 2]);
 	for i in 0..64u32 {
 		values.push(i % 0x50);
 	}
@@ -231,6 +236,62 @@ fn specialized_u32_bulk_matches_generic_bulk() {
 	let mut decoded3 = vec![0u32; values.len()];
 	bulk_decode(&specialized[..specialized_len], &mut decoded3).unwrap();
 	assert_eq!(decoded3, values);
+}
+
+#[test]
+fn specialized_u64_bulk_matches_generic_bulk() {
+	// Runs of one-byte and two-byte values interleaved with every
+	// larger size class, compared against the generic codec.
+	let mut values = Vec::new();
+	for i in 0..32u64 {
+		values.push(i % 0x50);
+	}
+	for i in 0..32u64 {
+		values.push(0x80 + (i * 41) % 0x3F80);
+	}
+	values.extend([
+		0x4000,
+		0x1FFFFF,
+		0x10000000,
+		u32::MAX as u64 + 1,
+		u64::MAX,
+		0,
+	]);
+	for i in 0..32u64 {
+		values.push(i % 0x50);
+	}
+
+	let mut generic = vec![0u8; values.len() * 9];
+	let generic_len = bulk_encode(&mut generic, &values).unwrap();
+	let mut specialized = vec![0u8; values.len() * 9];
+	let specialized_len = bulk_encode_u64(&mut specialized, &values).unwrap();
+	assert_eq!(specialized_len, generic_len);
+	assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
+
+	let mut decoded = vec![0u64; values.len()];
+	let read =
+		bulk_decode_u64(&specialized[..specialized_len], &mut decoded).unwrap();
+	assert_eq!(read, specialized_len);
+	assert_eq!(decoded, values);
+
+	// Cross-compatibility with the generic path in both directions.
+	let mut decoded2 = vec![0u64; values.len()];
+	bulk_decode_u64(&generic[..generic_len], &mut decoded2).unwrap();
+	assert_eq!(decoded2, values);
+	let mut decoded3 = vec![0u64; values.len()];
+	bulk_decode(&specialized[..specialized_len], &mut decoded3).unwrap();
+	assert_eq!(decoded3, values);
+}
+
+#[test]
+fn two_byte_run_decode_rejects_invalid_interior() {
+	// A stream that starts like a two-byte run but is truncated inside
+	// a later value must error, not desynchronize.
+	let values = [0x100u32, 0x200, 0x300, 0x400, 0x12345678];
+	let mut buf = [0u8; 25];
+	let len = bulk_encode(&mut buf, &values).unwrap();
+	let mut out = [0u32; 5];
+	assert!(bulk_decode_u32(&buf[..len - 2], &mut out).is_err());
 }
 
 #[test]

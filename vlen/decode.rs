@@ -233,7 +233,9 @@ macro_rules! impl_decode {
 		impl Decode for $t {
 			const MAX_ENCODED_SIZE: usize = $size;
 
-			#[inline]
+			// inline(always): decode loops live or die by this being
+			// merged into the caller's loop body.
+			#[inline(always)]
 			fn decode(buf: &[u8]) -> Result<(Self, usize)> {
 				checked_decode!(buf, $size, $decode_fn)
 			}

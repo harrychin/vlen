@@ -267,7 +267,9 @@ macro_rules! impl_encode {
 				$size_expr
 			}
 
-			#[inline]
+			// inline(always): encode loops live or die by this being
+			// merged into the caller's loop body.
+			#[inline(always)]
 			fn encode(self, buf: &mut [u8]) -> Result<usize> {
 				if let Some(arr) = buf.first_chunk_mut::<$size>() {
 					return Ok($encode_fn(arr, self));

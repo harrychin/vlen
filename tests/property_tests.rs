@@ -467,11 +467,14 @@ fn test_specialized_bulk_matches_generic() {
 	arbtest(|u| {
 		let values: Vec<u32> = (0..u.arbitrary::<u8>()? as usize % 40)
 			.map(|_| {
-				// Bias toward small values so the SWAR path triggers.
-				if u.arbitrary::<bool>().unwrap_or(false) {
-					u.arbitrary::<u8>().unwrap_or(0) as u32 % 0x80
-				} else {
-					u.arbitrary::<u32>().unwrap_or(0)
+				// Bias toward the one- and two-byte classes so the
+				// SWAR fast paths trigger.
+				match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+					0 => u.arbitrary::<u8>().unwrap_or(0) as u32 % 0x80,
+					1 => {
+						0x80 + u.arbitrary::<u16>().unwrap_or(0) as u32 % 0x3F80
+					},
+					_ => u.arbitrary::<u32>().unwrap_or(0),
 				}
 			})
 			.collect();
@@ -487,6 +490,34 @@ fn test_specialized_bulk_matches_generic() {
 		let mut decoded = vec![0u32; values.len()];
 		let read =
 			bulk_decode_u32(&generic[..generic_len], &mut decoded).unwrap();
+		assert_eq!(read, generic_len);
+		assert_eq!(decoded, values);
+		Ok(())
+	});
+}
+
+#[test]
+fn test_specialized_u64_bulk_matches_generic() {
+	arbtest(|u| {
+		let values: Vec<u64> = (0..u.arbitrary::<u8>()? as usize % 40)
+			.map(|_| match u.arbitrary::<u8>().unwrap_or(0) % 3 {
+				0 => u.arbitrary::<u8>().unwrap_or(0) as u64 % 0x80,
+				1 => 0x80 + u.arbitrary::<u16>().unwrap_or(0) as u64 % 0x3F80,
+				_ => u.arbitrary::<u64>().unwrap_or(0),
+			})
+			.collect();
+
+		let mut generic = vec![0u8; values.len() * 9 + 1];
+		let generic_len = bulk_encode(&mut generic, &values).unwrap();
+		let mut specialized = vec![0u8; values.len() * 9 + 1];
+		let specialized_len =
+			bulk_encode_u64(&mut specialized, &values).unwrap();
+		assert_eq!(specialized_len, generic_len);
+		assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
+
+		let mut decoded = vec![0u64; values.len()];
+		let read =
+			bulk_decode_u64(&generic[..generic_len], &mut decoded).unwrap();
 		assert_eq!(read, generic_len);
 		assert_eq!(decoded, values);
 		Ok(())
