@@ -1,116 +1,59 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use vlen::{
-	bulk_decode, bulk_encode, decode_u128, decode_u16, decode_u32, decode_u64,
-	encode_u128, encode_u16, encode_u32, encode_u64,
+	decode_u16, decode_u32, decode_u64, decode_u128, encode_u16, encode_u32,
+	encode_u64, encode_u128,
 };
 
-fn bench_encode_u16(c: &mut Criterion) {
-	let mut buf = [0u8; 3];
-	c.bench_function("encode_u16", |b| {
-		b.iter(|| {
-			let v = black_box(12345u16);
-			encode_u16(&mut buf, v)
-		})
-	});
+macro_rules! encode_bench {
+	($name:ident, $fn:ident, $buf_size:expr, $value:expr) => {
+		fn $name(c: &mut Criterion) {
+			let mut buf = [0u8; $buf_size];
+			c.bench_function(stringify!($fn), |b| {
+				b.iter(|| $fn(black_box(&mut buf), black_box($value)))
+			});
+		}
+	};
 }
 
-fn bench_encode_u32(c: &mut Criterion) {
-	let mut buf = [0u8; 5];
-	c.bench_function("encode_u32", |b| {
-		b.iter(|| {
-			let v = black_box(12345678u32);
-			encode_u32(&mut buf, v)
-		})
-	});
+macro_rules! decode_bench {
+	($name:ident, $encode_fn:ident, $decode_fn:ident, $buf_size:expr, $value:expr) => {
+		fn $name(c: &mut Criterion) {
+			let mut buf = [0u8; $buf_size];
+			let _len = $encode_fn(&mut buf, $value);
+			c.bench_function(stringify!($decode_fn), |b| {
+				b.iter(|| $decode_fn(black_box(&buf)))
+			});
+		}
+	};
 }
 
-fn bench_encode_u64(c: &mut Criterion) {
-	let mut buf = [0u8; 9];
-	c.bench_function("encode_u64", |b| {
-		b.iter(|| {
-			let v = black_box(0x1234567890ABCDEFu64);
-			encode_u64(&mut buf, v)
-		})
-	});
-}
+encode_bench!(bench_encode_u16, encode_u16, 3, 12345u16);
+encode_bench!(bench_encode_u32, encode_u32, 5, 12345678u32);
+encode_bench!(bench_encode_u64, encode_u64, 9, 0x1234567890ABCDEFu64);
+encode_bench!(
+	bench_encode_u128,
+	encode_u128,
+	17,
+	0x1234567890ABCDEF1234567890ABCDEFu128
+);
 
-fn bench_encode_u128(c: &mut Criterion) {
-	let mut buf = [0u8; 17];
-	c.bench_function("encode_u128", |b| {
-		b.iter(|| {
-			let v = black_box(0x1234567890ABCDEF1234567890ABCDEFu128);
-			encode_u128(&mut buf, v)
-		})
-	});
-}
-
-fn bench_decode_u16(c: &mut Criterion) {
-	let mut buf = [0u8; 3];
-	let _len = encode_u16(&mut buf, 12345u16);
-	c.bench_function("decode_u16", |b| b.iter(|| decode_u16(&buf)));
-}
-
-fn bench_decode_u32(c: &mut Criterion) {
-	let mut buf = [0u8; 5];
-	let _len = encode_u32(&mut buf, 12345678u32);
-	c.bench_function("decode_u32", |b| b.iter(|| decode_u32(&buf)));
-}
-
-fn bench_decode_u64(c: &mut Criterion) {
-	let mut buf = [0u8; 9];
-	let _len = encode_u64(&mut buf, 0x1234567890ABCDEFu64);
-	c.bench_function("decode_u64", |b| b.iter(|| decode_u64(&buf)));
-}
-
-fn bench_decode_u128(c: &mut Criterion) {
-	let mut buf = [0u8; 17];
-	let _len = encode_u128(&mut buf, 0x1234567890ABCDEF1234567890ABCDEFu128);
-	c.bench_function("decode_u128", |b| b.iter(|| decode_u128(&buf)));
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn bench_bulk_encode_u32(c: &mut Criterion) {
-	let mut buf = [0u8; 5 * 1024];
-	let values: Vec<u32> = (0..1024)
-		.map(|i| match i % 4 {
-			0 => i as u32,
-			1 => 1000 + i as u32,
-			2 => 1000000 + i as u32,
-			_ => 1000000000 + i as u32,
-		})
-		.collect();
-
-	c.bench_function("bulk_encode_u32", |b| {
-		b.iter(|| bulk_encode(&mut buf, &values))
-	});
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn bench_bulk_decode_u32(c: &mut Criterion) {
-	let mut buf = [0u8; 5 * 1024];
-	let values: Vec<u32> = (0..1024)
-		.map(|i| match i % 4 {
-			0 => i as u32,
-			1 => 1000 + i as u32,
-			2 => 1000000 + i as u32,
-			_ => 1000000000 + i as u32,
-		})
-		.collect();
-
-	let encoded_len = bulk_encode(&mut buf, &values).unwrap();
-	let mut decoded_values = [0u32; 1024];
-
-	c.bench_function("bulk_decode", |b| {
-		b.iter(|| bulk_decode(&buf[..encoded_len], &mut decoded_values))
-	});
-}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn bench_bulk_encode_u32(_c: &mut Criterion) {}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn bench_bulk_decode_u32(_c: &mut Criterion) {}
+decode_bench!(bench_decode_u16, encode_u16, decode_u16, 3, 12345u16);
+decode_bench!(bench_decode_u32, encode_u32, decode_u32, 5, 12345678u32);
+decode_bench!(
+	bench_decode_u64,
+	encode_u64,
+	decode_u64,
+	9,
+	0x1234567890ABCDEFu64
+);
+decode_bench!(
+	bench_decode_u128,
+	encode_u128,
+	decode_u128,
+	17,
+	0x1234567890ABCDEF1234567890ABCDEFu128
+);
 
 criterion_group!(
 	benches,
@@ -122,7 +65,5 @@ criterion_group!(
 	bench_decode_u32,
 	bench_decode_u64,
 	bench_decode_u128,
-	bench_bulk_encode_u32,
-	bench_bulk_decode_u32
 );
 criterion_main!(benches);

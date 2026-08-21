@@ -1,234 +1,175 @@
-#[cfg(feature = "serde")]
-mod serde_tests {
-	use serde::{Deserialize, Serialize};
-	use vlen::serde::*;
+#![cfg(feature = "serde")]
 
-	#[derive(Debug, Serialize, Deserialize, PartialEq)]
-	struct TestStruct {
-		u16_val: VlenU16,
-		u32_val: VlenU32,
-		u64_val: VlenU64,
-		u128_val: VlenU128,
-		i16_val: VlenI16,
-		i32_val: VlenI32,
-		i64_val: VlenI64,
-		i128_val: VlenI128,
-		f32_val: VlenF32,
-		f64_val: VlenF64,
-	}
+use serde::{Deserialize, Serialize};
+use vlen::serde::{
+	VlenF32,
+	VlenF64,
+	VlenI16,
+	VlenI32,
+	VlenI64,
+	VlenI128,
+	VlenU16,
+	VlenU32,
+	VlenU64,
+	VlenU128,
+};
 
-	#[test]
-	fn test_serde_roundtrip() {
-		let data = TestStruct {
-			u16_val: VlenU16(12345),
-			u32_val: VlenU32(123456789),
-			u64_val: VlenU64(1234567890123456789),
-			u128_val: VlenU128(123456789012345678901234567890123456789),
-			i16_val: VlenI16(-12345),
-			i32_val: VlenI32(-123456789),
-			i64_val: VlenI64(-1234567890123456789),
-			i128_val: VlenI128(-123456789012345678901234567890123456789),
-			f32_val: VlenF32(3.14159),
-			f64_val: VlenF64(2.718281828459045),
-		};
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct TestStruct {
+	u16_val: VlenU16,
+	u32_val: VlenU32,
+	u64_val: VlenU64,
+	u128_val: VlenU128,
+	i16_val: VlenI16,
+	i32_val: VlenI32,
+	i64_val: VlenI64,
+	i128_val: VlenI128,
+	f32_val: VlenF32,
+	f64_val: VlenF64,
+}
 
-		// Test JSON serialization/deserialization
-		let json = serde_json::to_string(&data).unwrap();
-		let deserialized: TestStruct = serde_json::from_str(&json).unwrap();
-
-		assert_eq!(data, deserialized);
-	}
-
-	#[test]
-	fn test_individual_types() {
-		// Test u16
-		let u16_val = VlenU16(65535);
-		let json = serde_json::to_string(&u16_val).unwrap();
-		println!("JSON output: {}", json);
-		let deserialized: VlenU16 = serde_json::from_str(&json).unwrap();
-		assert_eq!(u16_val, deserialized);
-
-		// Test u32
-		let u32_val = VlenU32(4294967295);
-		let json = serde_json::to_string(&u32_val).unwrap();
-		let deserialized: VlenU32 = serde_json::from_str(&json).unwrap();
-		assert_eq!(u32_val, deserialized);
-
-		// Test u64
-		let u64_val = VlenU64(18446744073709551615);
-		let json = serde_json::to_string(&u64_val).unwrap();
-		let deserialized: VlenU64 = serde_json::from_str(&json).unwrap();
-		assert_eq!(u64_val, deserialized);
-
-		// Test u128
-		let u128_val = VlenU128(340282366920938463463374607431768211455);
-		let json = serde_json::to_string(&u128_val).unwrap();
-		let deserialized: VlenU128 = serde_json::from_str(&json).unwrap();
-		assert_eq!(u128_val, deserialized);
-
-		// Test i16
-		let i16_val = VlenI16(-32768);
-		let json = serde_json::to_string(&i16_val).unwrap();
-		let deserialized: VlenI16 = serde_json::from_str(&json).unwrap();
-		assert_eq!(i16_val, deserialized);
-
-		// Test i32
-		let i32_val = VlenI32(-2147483648);
-		let json = serde_json::to_string(&i32_val).unwrap();
-		let deserialized: VlenI32 = serde_json::from_str(&json).unwrap();
-		assert_eq!(i32_val, deserialized);
-
-		// Test i64
-		let i64_val = VlenI64(-9223372036854775808);
-		let json = serde_json::to_string(&i64_val).unwrap();
-		let deserialized: VlenI64 = serde_json::from_str(&json).unwrap();
-		assert_eq!(i64_val, deserialized);
-
-		// Test i128
-		let i128_val = VlenI128(-170141183460469231731687303715884105728);
-		let json = serde_json::to_string(&i128_val).unwrap();
-		let deserialized: VlenI128 = serde_json::from_str(&json).unwrap();
-		assert_eq!(i128_val, deserialized);
-
-		// Test f32
-		let f32_val = VlenF32(std::f32::consts::PI);
-		let json = serde_json::to_string(&f32_val).unwrap();
-		let deserialized: VlenF32 = serde_json::from_str(&json).unwrap();
-		assert_eq!(f32_val, deserialized);
-
-		// Test f64
-		let f64_val = VlenF64(std::f64::consts::E);
-		let json = serde_json::to_string(&f64_val).unwrap();
-		let deserialized: VlenF64 = serde_json::from_str(&json).unwrap();
-		assert_eq!(f64_val, deserialized);
-	}
-
-	#[test]
-	fn test_edge_cases() {
-		// Test zero values
-		let zero_struct = TestStruct {
-			u16_val: VlenU16(0),
-			u32_val: VlenU32(0),
-			u64_val: VlenU64(0),
-			u128_val: VlenU128(0),
-			i16_val: VlenI16(0),
-			i32_val: VlenI32(0),
-			i64_val: VlenI64(0),
-			i128_val: VlenI128(0),
-			f32_val: VlenF32(0.0),
-			f64_val: VlenF64(0.0),
-		};
-
-		let json = serde_json::to_string(&zero_struct).unwrap();
-		let deserialized: TestStruct = serde_json::from_str(&json).unwrap();
-		assert_eq!(zero_struct, deserialized);
-
-		// Test maximum values
-		let max_struct = TestStruct {
-			u16_val: VlenU16(u16::MAX),
-			u32_val: VlenU32(u32::MAX),
-			u64_val: VlenU64(u64::MAX),
-			u128_val: VlenU128(u128::MAX),
-			i16_val: VlenI16(i16::MAX),
-			i32_val: VlenI32(i32::MAX),
-			i64_val: VlenI64(i64::MAX),
-			i128_val: VlenI128(i128::MAX),
-			f32_val: VlenF32(f32::MAX),
-			f64_val: VlenF64(f64::MAX),
-		};
-
-		let json = serde_json::to_string(&max_struct).unwrap();
-		let deserialized: TestStruct = serde_json::from_str(&json).unwrap();
-		assert_eq!(max_struct, deserialized);
-
-		// Test minimum values
-		let min_struct = TestStruct {
-			u16_val: VlenU16(u16::MIN),
-			u32_val: VlenU32(u32::MIN),
-			u64_val: VlenU64(u64::MIN),
-			u128_val: VlenU128(u128::MIN),
-			i16_val: VlenI16(i16::MIN),
-			i32_val: VlenI32(i32::MIN),
-			i64_val: VlenI64(i64::MIN),
-			i128_val: VlenI128(i128::MIN),
-			f32_val: VlenF32(f32::MIN),
-			f64_val: VlenF64(f64::MIN),
-		};
-
-		let json = serde_json::to_string(&min_struct).unwrap();
-		let deserialized: TestStruct = serde_json::from_str(&json).unwrap();
-		assert_eq!(min_struct, deserialized);
-	}
-
-	#[test]
-	fn test_deref_and_deref_mut() {
-		let mut u32_val = VlenU32(42);
-		assert_eq!(*u32_val, 42);
-
-		*u32_val = 100;
-		assert_eq!(*u32_val, 100);
-		assert_eq!(u32_val.0, 100);
-
-		let mut i64_val = VlenI64(-42);
-		assert_eq!(*i64_val, -42);
-
-		*i64_val = -100;
-		assert_eq!(*i64_val, -100);
-		assert_eq!(i64_val.0, -100);
-
-		let mut f32_val = VlenF32(3.14);
-		assert_eq!(*f32_val, 3.14);
-
-		*f32_val = 2.71;
-		assert_eq!(*f32_val, 2.71);
-		assert_eq!(f32_val.0, 2.71);
-	}
-
-	#[test]
-	fn test_from_traits() {
-		let u32_val: VlenU32 = 42.into();
-		assert_eq!(*u32_val, 42);
-
-		let i64_val: VlenI64 = (-42).into();
-		assert_eq!(*i64_val, -42);
-
-		let f64_val: VlenF64 = 3.14159.into();
-		assert_eq!(*f64_val, 3.14159);
-	}
-
-	#[test]
-	fn test_serde_with_vectors() {
-		#[derive(Debug, Serialize, Deserialize, PartialEq)]
-		struct VectorTest {
-			u32_vec: Vec<VlenU32>,
-			i64_vec: Vec<VlenI64>,
-			f32_vec: Vec<VlenF32>,
-		}
-
-		let data = VectorTest {
-			u32_vec: vec![VlenU32(1), VlenU32(2), VlenU32(3)],
-			i64_vec: vec![VlenI64(-1), VlenI64(-2), VlenI64(-3)],
-			f32_vec: vec![VlenF32(1.1), VlenF32(2.2), VlenF32(3.3)],
-		};
-
-		let json = serde_json::to_string(&data).unwrap();
-		let deserialized: VectorTest = serde_json::from_str(&json).unwrap();
-		assert_eq!(data, deserialized);
+fn sample() -> TestStruct {
+	TestStruct {
+		u16_val: VlenU16(12345),
+		u32_val: VlenU32(123456789),
+		u64_val: VlenU64(1234567890123456789),
+		u128_val: VlenU128(123456789012345678901234567890123456789),
+		i16_val: VlenI16(-12345),
+		i32_val: VlenI32(-123456789),
+		i64_val: VlenI64(-1234567890123456789),
+		i128_val: VlenI128(-123456789012345678901234567890123456789),
+		f32_val: VlenF32(core::f32::consts::PI),
+		f64_val: VlenF64(core::f64::consts::E),
 	}
 }
 
 #[test]
-fn test_serde_feature_gate() {
-	// This test ensures that the serde module is only available when the feature is enabled
-	#[cfg(feature = "serde")]
-	{
-		use vlen::serde::VlenU32;
-		let _val = VlenU32(42);
+fn json_round_trip() {
+	let data = sample();
+	let json = serde_json::to_string(&data).unwrap();
+	let back: TestStruct = serde_json::from_str(&json).unwrap();
+	assert_eq!(data, back);
+}
+
+#[test]
+fn postcard_round_trip() {
+	let data = sample();
+	let bytes = postcard::to_stdvec(&data).unwrap();
+	let back: TestStruct = postcard::from_bytes(&bytes).unwrap();
+	assert_eq!(data, back);
+}
+
+#[test]
+fn binary_formats_get_raw_bytes_not_base64() {
+	// In a binary format the payload must be the raw vlen encoding
+	// (length prefix + bytes), not a base64 string blown up by a third.
+	let bytes = postcard::to_stdvec(&VlenU32(5)).unwrap();
+	assert_eq!(bytes, [1, 5]);
+
+	let mut expected = [0u8; 5];
+	let len = vlen::encode_u32(&mut expected, 123456789);
+	let bytes = postcard::to_stdvec(&VlenU32(123456789)).unwrap();
+	assert_eq!(bytes[0] as usize, len);
+	assert_eq!(&bytes[1..], &expected[..len]);
+}
+
+#[test]
+fn json_representation_is_base64() {
+	let json = serde_json::to_string(&VlenU32(0)).unwrap();
+	assert_eq!(json, "\"AA==\"");
+}
+
+#[test]
+fn extreme_values_round_trip() {
+	macro_rules! check {
+		($wrapper:ident, $value:expr) => {
+			let value = $wrapper($value);
+			let json = serde_json::to_string(&value).unwrap();
+			let back: $wrapper = serde_json::from_str(&json).unwrap();
+			assert_eq!(value, back);
+			let bytes = postcard::to_stdvec(&value).unwrap();
+			let back: $wrapper = postcard::from_bytes(&bytes).unwrap();
+			assert_eq!(value, back);
+		};
 	}
 
-	#[cfg(not(feature = "serde"))]
-	{
-		// When serde feature is not enabled, the module should not be available
-		// This is a compile-time check
+	check!(VlenU16, 0);
+	check!(VlenU16, u16::MAX);
+	check!(VlenU32, u32::MAX);
+	check!(VlenU64, u64::MAX);
+	check!(VlenU128, u128::MAX);
+	check!(VlenI16, i16::MIN);
+	check!(VlenI32, i32::MIN);
+	check!(VlenI64, i64::MIN);
+	check!(VlenI128, i128::MIN);
+	check!(VlenF32, f32::MAX);
+	check!(VlenF64, f64::MIN);
+}
+
+#[test]
+fn malicious_input_is_rejected_not_panicked() {
+	// Base64 longer than any valid encoding.
+	let long = format!("\"{}\"", "A".repeat(64));
+	assert!(serde_json::from_str::<VlenU32>(&long).is_err());
+
+	// Valid base64, but more bytes than the type can use.
+	let json = serde_json::to_string(&VlenU128(u128::MAX)).unwrap();
+	assert!(serde_json::from_str::<VlenU16>(&json).is_err());
+
+	// Not base64 at all.
+	assert!(serde_json::from_str::<VlenU32>("\"!!!\"").is_err());
+
+	// Wrong JSON type.
+	assert!(serde_json::from_str::<VlenU32>("42").is_err());
+
+	// Trailing garbage after a valid encoding.
+	assert!(serde_json::from_str::<VlenU32>("\"AAAA\"").is_err());
+}
+
+#[test]
+fn deref_and_deref_mut() {
+	let mut u32_val = VlenU32(42);
+	assert_eq!(*u32_val, 42);
+	*u32_val = 100;
+	assert_eq!(u32_val.0, 100);
+
+	let mut f64_val = VlenF64(1.5);
+	assert_eq!(*f64_val, 1.5);
+	*f64_val = -2.25;
+	assert_eq!(f64_val.0, -2.25);
+}
+
+#[test]
+fn conversions() {
+	let wrapped: VlenU32 = 42.into();
+	assert_eq!(*wrapped, 42);
+	let raw: u32 = wrapped.into();
+	assert_eq!(raw, 42);
+
+	let wrapped: VlenI64 = (-42).into();
+	assert_eq!(i64::from(wrapped), -42);
+}
+
+#[test]
+fn vectors_round_trip() {
+	#[derive(Debug, Serialize, Deserialize, PartialEq)]
+	struct VectorTest {
+		u32_vec: Vec<VlenU32>,
+		i64_vec: Vec<VlenI64>,
+		f32_vec: Vec<VlenF32>,
 	}
+
+	let data = VectorTest {
+		u32_vec: vec![VlenU32(1), VlenU32(2), VlenU32(3)],
+		i64_vec: vec![VlenI64(-1), VlenI64(-2), VlenI64(-3)],
+		f32_vec: vec![VlenF32(1.5), VlenF32(-2.25), VlenF32(3.75)],
+	};
+
+	let json = serde_json::to_string(&data).unwrap();
+	let from_json: VectorTest = serde_json::from_str(&json).unwrap();
+	assert_eq!(data, from_json);
+
+	let bytes = postcard::to_stdvec(&data).unwrap();
+	let from_postcard: VectorTest = postcard::from_bytes(&bytes).unwrap();
+	assert_eq!(data, from_postcard);
 }

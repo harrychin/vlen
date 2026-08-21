@@ -198,7 +198,7 @@ macro_rules! signed_encoded_size_consistency_test {
 				let value = u.arbitrary::<$type>()?;
 				let mut buf = [0u8; $buf_size];
 				let actual_len = $encode_fn(&mut buf, value);
-				let calculated_size = encoded_size(value).unwrap();
+				let calculated_size = encoded_size(value);
 				assert_eq!(actual_len, calculated_size);
 				Ok(())
 			});
@@ -412,7 +412,7 @@ fn test_bulk_encode_decode_mixed_types() {
 fn test_convenience_functions_round_trip() {
 	arbtest(|u| {
 		let value = u.arbitrary::<u32>()?;
-		let encoded = encode_to_vec(value).unwrap();
+		let encoded = encode_to_vec(value);
 		let decoded = decode_value::<u32>(&encoded).unwrap();
 		assert_eq!(value, decoded);
 		Ok(())
@@ -426,9 +426,69 @@ fn test_bulk_convenience_functions_round_trip() {
 		let values: Vec<i32> = (0..u.arbitrary::<u8>()? as usize % 5 + 1)
 			.map(|_| u.arbitrary::<i32>().unwrap())
 			.collect();
-		let encoded = bulk_encode_to_vec(&values).unwrap();
+		let encoded = bulk_encode_to_vec(&values);
 		let decoded = bulk_decode_values::<i32>(&encoded).unwrap();
 		assert_eq!(values, decoded);
+		Ok(())
+	});
+}
+
+#[test]
+fn test_checked_round_trip_from_exact_slice() {
+	arbtest(|u| {
+		let mut buf = [0u8; 17];
+
+		macro_rules! check {
+			($t:ty) => {
+				let value = u.arbitrary::<$t>()?;
+				let len = Encode::encode(value, &mut buf[..]).unwrap();
+				let (decoded, decoded_len) =
+					<$t as Decode>::decode(&buf[..len]).unwrap();
+				assert_eq!(value, decoded);
+				assert_eq!(len, decoded_len);
+				assert_eq!(len, value.encoded_size());
+			};
+		}
+
+		check!(u16);
+		check!(u32);
+		check!(u64);
+		check!(u128);
+		check!(i16);
+		check!(i32);
+		check!(i64);
+		check!(i128);
+		Ok(())
+	});
+}
+
+#[test]
+fn test_specialized_bulk_matches_generic() {
+	arbtest(|u| {
+		let values: Vec<u32> = (0..u.arbitrary::<u8>()? as usize % 40)
+			.map(|_| {
+				// Bias toward small values so the SWAR path triggers.
+				if u.arbitrary::<bool>().unwrap_or(false) {
+					u.arbitrary::<u8>().unwrap_or(0) as u32 % 0x80
+				} else {
+					u.arbitrary::<u32>().unwrap_or(0)
+				}
+			})
+			.collect();
+
+		let mut generic = vec![0u8; values.len() * 5 + 1];
+		let generic_len = bulk_encode(&mut generic, &values).unwrap();
+		let mut specialized = vec![0u8; values.len() * 5 + 1];
+		let specialized_len =
+			bulk_encode_u32(&mut specialized, &values).unwrap();
+		assert_eq!(specialized_len, generic_len);
+		assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
+
+		let mut decoded = vec![0u32; values.len()];
+		let read = bulk_decode_u32(&generic[..generic_len], &mut decoded)
+			.unwrap();
+		assert_eq!(read, generic_len);
+		assert_eq!(decoded, values);
 		Ok(())
 	});
 }
@@ -465,7 +525,7 @@ fn test_edge_case_values() {
 fn test_buffer_overflow_handling() {
 	arbtest(|u| {
 		let value = u.arbitrary::<u32>()?;
-		let required_size = encoded_size(value).unwrap();
+		let required_size = encoded_size(value);
 
 		if required_size > 1 {
 			let mut small_buf = [0u8; 1];
@@ -511,38 +571,19 @@ fn test_truncated_data_handling() {
 }
 
 #[test]
-#[cfg(feature = "simd")]
-fn test_simd_bulk_operations_when_available() {
+fn test_bulk_u32_round_trip() {
 	arbtest(|u| {
 		let values: Vec<u32> = (0..u.arbitrary::<u8>()? as usize % 10 + 1)
 			.map(|_| u.arbitrary::<u32>().unwrap())
 			.collect();
 		let mut buf = vec![0u8; values.len() * 5];
-		let encoded_len = bulk_encode_u32_safe(&mut buf, &values).unwrap();
+		let encoded_len = bulk_encode_u32(&mut buf, &values).unwrap();
 		buf.truncate(encoded_len);
 		let mut decoded_values = vec![0u32; values.len()];
-		let _decoded_len =
-			bulk_decode_u32_safe(&buf, &mut decoded_values).unwrap();
-		assert_eq!(values.len(), decoded_values.len());
-		Ok(())
-	});
-}
-
-#[test]
-#[cfg(feature = "simd")]
-fn test_simd_buffer_size_validation() {
-	arbtest(|u| {
-		let values: Vec<u32> = (0..u.arbitrary::<u8>()? as usize % 10 + 1)
-			.map(|_| u.arbitrary::<u32>().unwrap())
-			.collect();
-
-		let mut small_buf = vec![0u8; values.len() * 2];
-		let result = bulk_encode_u32_safe(&mut small_buf, &values);
-		assert!(result.is_err());
-
-		let mut adequate_buf = vec![0u8; values.len() * 5];
-		let result = bulk_encode_u32_safe(&mut adequate_buf, &values);
-		assert!(result.is_ok());
+		let decoded_len =
+			bulk_decode_u32(&buf, &mut decoded_values).unwrap();
+		assert_eq!(decoded_len, encoded_len);
+		assert_eq!(values, decoded_values);
 		Ok(())
 	});
 }

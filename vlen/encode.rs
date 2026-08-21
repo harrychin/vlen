@@ -1,66 +1,18 @@
-//! Encoding functions for vlen
+//! Encoding functions for vlen.
+//!
+//! The array-based functions in this module are the fast, infallible
+//! core of the codec: their array parameter types guarantee enough room
+//! for any value of the type, so they cannot fail. They may write to
+//! bytes of the array beyond the returned length; only the first
+//! `returned length` bytes are part of the encoding. All of them are
+//! `const fn`, so they can also be evaluated at compile time.
+//!
+//! For encoding into arbitrary slices with error handling, use the
+//! [`Encode`] trait or the free [`encode`](crate::encode) function.
 
-use crate::helpers::ptr_from_mut;
+use crate::error::{Error, Result};
 
-/// Macro for writing aligned/unaligned values to a buffer at offset 1
-macro_rules! write_aligned_at_offset {
-	($buf:expr, $value:expr, $ut:ident, $shift:expr) => {
-		unsafe {
-			let ptr =
-				ptr_from_mut::<[u8; core::mem::size_of::<$ut>() + 1]>($buf)
-					.cast::<u8>()
-					.add(1)
-					.cast::<$ut>();
-			if ptr.is_aligned() {
-				ptr.write(($value >> $shift).to_le());
-			} else {
-				ptr.write_unaligned(($value >> $shift).to_le());
-			}
-		}
-	};
-}
-
-/// Unified macro for size calculation and encoding of large integers
-macro_rules! encode_large_int {
-	($(#[$docs:meta])* $size_fn:ident, $encode_fn:ident ( $ut:ident, $smaller_ut:ident, $smaller_size_fn:ident, $smaller_encode_fn:ident, $max_smaller:expr, $buf_size:expr, $smaller_buf_size:expr ) ) => {
-		$(#[$docs])*
-		#[inline]
-		#[must_use]
-		pub const fn $size_fn(value: $ut) -> usize {
-			match value {
-				_ if value <= $max_smaller as $ut => $smaller_size_fn(value as $smaller_ut),
-				_ => {
-					const LEN_MASK: u8 = if $ut::BITS == 64 { 0b111 } else { 0b1111 };
-					let len = (((value.leading_zeros() >> 3) as u8) ^ LEN_MASK);
-					(len + 2) as usize
-				},
-			}
-		}
-
-		$(#[$docs])*
-		#[inline]
-		#[must_use]
-		pub fn $encode_fn(buf: &mut [u8; $buf_size], value: $ut) -> usize {
-			match value {
-				_ if value <= $max_smaller as $ut => {
-				let buf_smaller = unsafe {
-						&mut *(ptr_from_mut::<[u8; $buf_size]>(buf).cast::<[u8; $smaller_buf_size]>())
-				};
-					$smaller_encode_fn(buf_smaller, value as $smaller_ut)
-			},
-			_ => {
-					write_aligned_at_offset!(buf, value, $ut, 0);
-					const LEN_MASK: u8 = if $ut::BITS == 64 { 0b111 } else { 0b1111 };
-					let len = (((value.leading_zeros() >> 3) as u8) ^ LEN_MASK);
-					buf[0] = 0xF0 | len;
-				(len + 2) as usize
-			},
-			}
-		}
-	};
-}
-
-/// Returns the encoded length in a `vlen` prefix byte.
+/// Returns the total encoded length announced by a `vlen` prefix byte.
 #[must_use]
 pub const fn encoded_len(b: u8) -> usize {
 	match b {
@@ -72,7 +24,7 @@ pub const fn encoded_len(b: u8) -> usize {
 	}
 }
 
-/// Calculates the encoded size of a u16 value without encoding it.
+/// Calculates the encoded size of a `u16` value without encoding it.
 #[inline]
 #[must_use]
 pub const fn encoded_size_u16(value: u16) -> usize {
@@ -83,34 +35,47 @@ pub const fn encoded_size_u16(value: u16) -> usize {
 	}
 }
 
-/// Calculates the encoded size of a u32 value without encoding it.
+/// Calculates the encoded size of a `u32` value without encoding it.
 #[inline]
 #[must_use]
 pub const fn encoded_size_u32(value: u32) -> usize {
 	match value {
-		_ if value <= u16::MAX as u32 => encoded_size_u16(value as u16),
+		_ if value < 0x80 => 1,
+		_ if value < 0x4000 => 2,
 		_ if value < 0x200000 => 3,
 		_ if value < 0x10000000 => 4,
 		_ => 5,
 	}
 }
 
-encode_large_int! {
-	/// Calculates the encoded size of a u64 value without encoding it.
-	encoded_size_u64,
-	encode_u64(u64, u32, encoded_size_u32, encode_u32, u32::MAX, 9, 5)
+/// Calculates the encoded size of a `u64` value without encoding it.
+#[inline]
+#[must_use]
+pub const fn encoded_size_u64(value: u64) -> usize {
+	if value <= u32::MAX as u64 {
+		encoded_size_u32(value as u32)
+	} else {
+		let len = ((value.leading_zeros() >> 3) as u8) ^ 0b111;
+		(len + 2) as usize
+	}
 }
 
-encode_large_int! {
-	/// Calculates the encoded size of a u128 value without encoding it.
-	encoded_size_u128,
-	encode_u128(u128, u64, encoded_size_u64, encode_u64, u64::MAX, 17, 9)
+/// Calculates the encoded size of a `u128` value without encoding it.
+#[inline]
+#[must_use]
+pub const fn encoded_size_u128(value: u128) -> usize {
+	if value <= u64::MAX as u128 {
+		encoded_size_u64(value as u64)
+	} else {
+		let len = ((value.leading_zeros() >> 3) as u8) ^ 0b1111;
+		(len + 2) as usize
+	}
 }
 
 /// Encodes a `u16` into a buffer, returning the encoded length.
 #[inline]
 #[must_use]
-pub fn encode_u16(buf: &mut [u8; 3], value: u16) -> usize {
+pub const fn encode_u16(buf: &mut [u8; 3], value: u16) -> usize {
 	match value {
 		_ if value < 0x80 => {
 			buf[0] = value as u8;
@@ -122,256 +87,222 @@ pub fn encode_u16(buf: &mut [u8; 3], value: u16) -> usize {
 			2
 		},
 		_ => {
-			buf[0] = 0xDE;
-			buf[1] = (value & 0xFF) as u8;
-			buf[2] = (value >> 8) as u8;
-			3
-		},
-	}
-}
-
-/// Encodes a `u32` into a buffer, returning the encoded length.
-#[inline]
-#[must_use]
-pub fn encode_u32(buf: &mut [u8; 5], value: u32) -> usize {
-	match value {
-		_ if value < 0x4000 => {
-			let buf_u16 = unsafe {
-				&mut *(ptr_from_mut::<[u8; 5]>(buf).cast::<[u8; 3]>())
-			};
-			encode_u16(buf_u16, value as u16)
-		},
-		_ if value < 0x200000 => {
 			buf[0] = 0xC0 | ((value & 0x1F) as u8);
 			buf[1] = (value >> 5) as u8;
 			buf[2] = (value >> 13) as u8;
 			3
 		},
-		_ if value < 0x10000000 => {
-			buf[0] = 0xE0 | ((value & 0x0F) as u8);
-			write_aligned_at_offset!(buf, value, u32, 4);
-			4
-		},
-		_ => {
-			write_aligned_at_offset!(buf, value, u32, 0);
-			buf[0] = 0xF3;
-			5
-		},
 	}
 }
 
-/// Unified macro for signed integer encoding
-macro_rules! encode_signed_int {
-	($(#[$docs:meta])* $name:ident ( $it:ident, $ut:ident, $encode_fn:ident, $buf_size:expr ) ) => {
+/// Generates the encoder for a wide unsigned type. Values up to
+/// `2^28` use the shared prefix-varint forms; larger values use the
+/// binary length prefix, whose payload is written at full width (the
+/// bytes past the returned length are scratch).
+macro_rules! encode_unsigned {
+	($(#[$docs:meta])* $name:ident, $ut:ident, $size:expr, $len_mask:expr) => {
 		$(#[$docs])*
 		#[inline]
 		#[must_use]
-		pub fn $name(buf: &mut [u8; $buf_size], value: $it) -> usize {
-			const ZIGZAG_SHIFT: u8 = ($ut::BITS as u8) - 1;
-			let zigzag = ((value >> ZIGZAG_SHIFT) as $ut) ^ ((value << 1) as $ut);
-			$encode_fn(buf, zigzag)
+		pub const fn $name(buf: &mut [u8; $size], value: $ut) -> usize {
+			match value {
+				_ if value < 0x80 => {
+					buf[0] = value as u8;
+					1
+				},
+				_ if value < 0x4000 => {
+					buf[0] = 0x80 | ((value & 0x3F) as u8);
+					buf[1] = (value >> 6) as u8;
+					2
+				},
+				_ if value < 0x200000 => {
+					buf[0] = 0xC0 | ((value & 0x1F) as u8);
+					buf[1] = (value >> 5) as u8;
+					buf[2] = (value >> 13) as u8;
+					3
+				},
+				_ if value < 0x10000000 => {
+					buf[0] = 0xE0 | ((value & 0x0F) as u8);
+					buf[1] = (value >> 4) as u8;
+					buf[2] = (value >> 12) as u8;
+					buf[3] = (value >> 20) as u8;
+					4
+				},
+				_ => {
+					let bytes = value.to_le_bytes();
+					let mut i = 0;
+					while i < $size - 1 {
+						buf[i + 1] = bytes[i];
+						i += 1;
+					}
+					let len = ((value.leading_zeros() >> 3) as u8) ^ $len_mask;
+					buf[0] = 0xF0 | len;
+					(len + 2) as usize
+				},
+			}
 		}
 	};
 }
 
-encode_signed_int! {
-	/// Encodes an `i16` into a buffer, returning the encoded length.
-	encode_i16(i16, u16, encode_u16, 3)
+encode_unsigned! {
+    /// Encodes a `u32` into a buffer, returning the encoded length.
+	encode_u32, u32, 5, 0b11
 }
 
-encode_signed_int! {
-	/// Encodes an `i32` into a buffer, returning the encoded length.
-	encode_i32(i32, u32, encode_u32, 5)
+encode_unsigned! {
+    /// Encodes a `u64` into a buffer, returning the encoded length.
+	encode_u64, u64, 9, 0b111
 }
 
-encode_signed_int! {
-	/// Encodes an `i64` into a buffer, returning the encoded length.
-	encode_i64(i64, u64, encode_u64, 9)
+encode_unsigned! {
+    /// Encodes a `u128` into a buffer, returning the encoded length.
+	encode_u128, u128, 17, 0b1111
 }
 
-encode_signed_int! {
-	/// Encodes an `i128` into a buffer, returning the encoded length.
-	encode_i128(i128, u128, encode_u128, 17)
-}
-
-/// Unified macro for floating-point encoding
-macro_rules! encode_float {
-	($(#[$docs:meta])* $name:ident ( $ft:ident, $ut:ident, $encode_fn:ident, $buf_size:expr ) ) => {
+/// Generates the zigzag encoder for a signed type.
+macro_rules! encode_signed {
+	($(#[$docs:meta])* $name:ident, $it:ident, $ut:ident, $encode_fn:ident, $size:expr) => {
 		$(#[$docs])*
 		#[inline]
 		#[must_use]
-		pub fn $name(buf: &mut [u8; $buf_size], value: $ft) -> usize {
+		pub const fn $name(buf: &mut [u8; $size], value: $it) -> usize {
+			$encode_fn(buf, zigzag!($it, $ut, value))
+		}
+	};
+}
+
+/// Maps a signed value to its zigzag unsigned representation.
+macro_rules! zigzag {
+	($it:ident, $ut:ident, $value:expr) => {
+		(($value >> ($ut::BITS - 1)) as $ut) ^ (($value << 1) as $ut)
+	};
+}
+
+encode_signed! {
+    /// Encodes an `i16` into a buffer, returning the encoded length.
+	encode_i16, i16, u16, encode_u16, 3
+}
+
+encode_signed! {
+    /// Encodes an `i32` into a buffer, returning the encoded length.
+	encode_i32, i32, u32, encode_u32, 5
+}
+
+encode_signed! {
+    /// Encodes an `i64` into a buffer, returning the encoded length.
+	encode_i64, i64, u64, encode_u64, 9
+}
+
+encode_signed! {
+    /// Encodes an `i128` into a buffer, returning the encoded length.
+	encode_i128, i128, u128, encode_u128, 17
+}
+
+/// Generates the reverse-endian encoder for a floating-point type.
+macro_rules! encode_float {
+	($(#[$docs:meta])* $name:ident, $ft:ident, $encode_fn:ident, $size:expr) => {
+		$(#[$docs])*
+		#[inline]
+		#[must_use]
+		pub const fn $name(buf: &mut [u8; $size], value: $ft) -> usize {
 			$encode_fn(buf, value.to_bits().swap_bytes())
 		}
 	};
 }
 
 encode_float! {
-	/// Encodes an `f32` into a buffer, returning the encoded length.
-	encode_f32(f32, u32, encode_u32, 5)
+    /// Encodes an `f32` into a buffer, returning the encoded length.
+	encode_f32, f32, encode_u32, 5
 }
 
 encode_float! {
-	/// Encodes an `f64` into a buffer, returning the encoded length.
-	encode_f64(f64, u64, encode_u64, 9)
+    /// Encodes an `f64` into a buffer, returning the encoded length.
+	encode_f64, f64, encode_u64, 9
 }
 
-/// Generic encoding function that works with any integer type.
+/// Encodes a value into a slice, returning the encoded length.
+///
+/// Unlike the array-based functions, the buffer only needs room for the
+/// value's actual encoded size, not the type's maximum.
 #[inline]
-pub fn encode<T>(buf: &mut [u8], value: T) -> Result<usize, &'static str>
-where
-	T: Encode,
-{
-	T::encode(buf, value)
+pub fn encode<T: Encode>(buf: &mut [u8], value: T) -> Result<usize> {
+	value.encode(buf)
 }
 
-/// Generic size calculation function that works with any integer type.
+/// Calculates the encoded size of a value without encoding it.
 #[inline]
-pub fn encoded_size<T>(value: T) -> Result<usize, &'static str>
-where
-	T: Encode,
-{
-	T::encoded_size(value)
+#[must_use]
+pub fn encoded_size<T: Encode>(value: T) -> usize {
+	value.encoded_size()
 }
 
-/// Bulk encoding function for multiple values.
-pub fn bulk_encode<T>(
-	buf: &mut [u8],
-	values: &[T],
-) -> Result<usize, &'static str>
-where
-	T: Encode + Copy,
-{
-	let mut offset = 0;
-	for &value in values {
-		if offset >= buf.len() {
-			return Err("buffer too small for bulk encoding");
-		}
-		let len = T::encode(&mut buf[offset..], value)?;
-		offset += len;
-	}
-	Ok(offset)
-}
-
-/// Trait for types that can be encoded using vlen.
-pub trait Encode: Sized {
-	/// Encodes the value into the provided buffer.
-	fn encode(buf: &mut [u8], value: Self) -> Result<usize, &'static str>;
-
-	/// Calculates the encoded size of the value without encoding it.
-	fn encoded_size(value: Self) -> Result<usize, &'static str>;
-
-	/// The maximum possible encoded size for this type.
+/// Types that can be encoded using vlen.
+pub trait Encode: Copy {
+    /// The maximum possible encoded size for this type.
 	const MAX_ENCODED_SIZE: usize;
+
+    /// Calculates the encoded size of the value without encoding it.
+	#[must_use]
+	fn encoded_size(self) -> usize;
+
+    /// Encodes the value into the slice, returning the encoded length.
+    ///
+    /// The slice only needs room for the value's actual encoded size.
+    /// Fails with [`Error::BufferTooSmall`] otherwise.
+	fn encode(self, buf: &mut [u8]) -> Result<usize>;
 }
 
-/// Macro to generate Encode implementation for unsigned integers
-macro_rules! impl_encode_unsigned {
-	($t:ty, $buf_size:expr, $encode_fn:ident, $size_fn:ident) => {
+/// Implements [`Encode`] on top of an array-based encoder plus a size
+/// expression evaluated with the value bound to `$v`.
+macro_rules! impl_encode {
+	($t:ty, $size:expr, $encode_fn:ident, $v:ident => $size_expr:expr) => {
 		impl Encode for $t {
+			const MAX_ENCODED_SIZE: usize = $size;
+
 			#[inline]
-			fn encode(
-				buf: &mut [u8],
-				value: Self,
-			) -> Result<usize, &'static str> {
-				if buf.len() < $buf_size {
-					return Err(concat!(
-						"buffer too small for ",
-						stringify!($t),
-						" encoding"
-					));
+			fn encoded_size(self) -> usize {
+				let $v = self;
+				$size_expr
+			}
+
+			#[inline]
+			fn encode(self, buf: &mut [u8]) -> Result<usize> {
+				if let Some(arr) = buf.first_chunk_mut::<$size>() {
+					return Ok($encode_fn(arr, self));
 				}
-				let buf_array =
-					unsafe { &mut *(buf.as_mut_ptr() as *mut [u8; $buf_size]) };
-				Ok($encode_fn(buf_array, value))
+				let mut tmp = [0u8; $size];
+				let len = $encode_fn(&mut tmp, self);
+				match buf.get_mut(..len) {
+					Some(dst) => {
+						dst.copy_from_slice(&tmp[..len]);
+						Ok(len)
+					},
+					None => Err(Error::BufferTooSmall {
+						needed: len,
+						available: buf.len(),
+					}),
+				}
 			}
-
-			#[inline]
-			fn encoded_size(value: Self) -> Result<usize, &'static str> {
-				Ok($size_fn(value))
-			}
-
-			const MAX_ENCODED_SIZE: usize = $buf_size;
 		}
 	};
 }
 
-/// Macro to generate Encode implementation for signed integers
-macro_rules! impl_encode_signed {
-	($t:ty, $buf_size:expr, $encode_fn:ident, $size_fn:ident, $cast_ty:ty) => {
-		impl Encode for $t {
-			#[inline]
-			fn encode(
-				buf: &mut [u8],
-				value: Self,
-			) -> Result<usize, &'static str> {
-				if buf.len() < $buf_size {
-					return Err(concat!(
-						"buffer too small for ",
-						stringify!($t),
-						" encoding"
-					));
-				}
-				let buf_array =
-					unsafe { &mut *(buf.as_mut_ptr() as *mut [u8; $buf_size]) };
-				Ok($encode_fn(buf_array, value))
-			}
+impl_encode!(u16, 3, encode_u16, v => encoded_size_u16(v));
+impl_encode!(u32, 5, encode_u32, v => encoded_size_u32(v));
+impl_encode!(u64, 9, encode_u64, v => encoded_size_u64(v));
+impl_encode!(u128, 17, encode_u128, v => encoded_size_u128(v));
 
-			#[inline]
-			fn encoded_size(value: Self) -> Result<usize, &'static str> {
-				// For signed integers, we need to convert to unsigned for size calculation
-				const ZIGZAG_SHIFT: u8 =
-					(core::mem::size_of::<$t>() * 8 - 1) as u8;
-				let zigzag: $cast_ty = ((value >> ZIGZAG_SHIFT) as $cast_ty)
-					^ ((value << 1) as $cast_ty);
-				Ok($size_fn(zigzag))
-			}
+impl_encode!(i16, 3, encode_i16, v => encoded_size_u16(zigzag!(i16, u16, v)));
+impl_encode!(i32, 5, encode_i32, v => encoded_size_u32(zigzag!(i32, u32, v)));
+impl_encode!(i64, 9, encode_i64, v => encoded_size_u64(zigzag!(i64, u64, v)));
+impl_encode!(
+	i128, 17, encode_i128,
+	v => encoded_size_u128(zigzag!(i128, u128, v))
+);
 
-			const MAX_ENCODED_SIZE: usize = $buf_size;
-		}
-	};
-}
-
-/// Macro to generate Encode implementation for floating-point types
-macro_rules! impl_encode_float {
-	($t:ty, $buf_size:expr, $encode_fn:ident, $size_fn:ident) => {
-		impl Encode for $t {
-			#[inline]
-			fn encode(
-				buf: &mut [u8],
-				value: Self,
-			) -> Result<usize, &'static str> {
-				if buf.len() < $buf_size {
-					return Err(concat!(
-						"buffer too small for ",
-						stringify!($t),
-						" encoding"
-					));
-				}
-				let buf_array =
-					unsafe { &mut *(buf.as_mut_ptr() as *mut [u8; $buf_size]) };
-				Ok($encode_fn(buf_array, value))
-			}
-
-			#[inline]
-			fn encoded_size(value: Self) -> Result<usize, &'static str> {
-				Ok($size_fn(value.to_bits().swap_bytes()))
-			}
-
-			const MAX_ENCODED_SIZE: usize = $buf_size;
-		}
-	};
-}
-
-impl_encode_unsigned!(u16, 3, encode_u16, encoded_size_u16);
-impl_encode_unsigned!(u32, 5, encode_u32, encoded_size_u32);
-impl_encode_unsigned!(u64, 9, encode_u64, encoded_size_u64);
-impl_encode_unsigned!(u128, 17, encode_u128, encoded_size_u128);
-
-impl_encode_signed!(i16, 3, encode_i16, encoded_size_u16, u16);
-impl_encode_signed!(i32, 5, encode_i32, encoded_size_u32, u32);
-impl_encode_signed!(i64, 9, encode_i64, encoded_size_u64, u64);
-impl_encode_signed!(i128, 17, encode_i128, encoded_size_u128, u128);
-
-impl_encode_float!(f32, 5, encode_f32, encoded_size_u32);
-impl_encode_float!(f64, 9, encode_f64, encoded_size_u64);
+impl_encode!(f32, 5, encode_f32, v => {
+	encoded_size_u32(v.to_bits().swap_bytes())
+});
+impl_encode!(f64, 9, encode_f64, v => {
+	encoded_size_u64(v.to_bits().swap_bytes())
+});

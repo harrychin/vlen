@@ -1,144 +1,110 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use integer_encoding::{VarIntReader, VarIntWriter};
+//! Comparison against LEB128 (varint) encoding.
+//!
+//! Both sides use their in-memory slice APIs so the comparison measures
+//! the codecs, not I/O machinery.
+
+use criterion::{Criterion, criterion_group, criterion_main};
+use integer_encoding::VarInt;
 use std::hint::black_box;
-use std::io::Cursor;
 use vlen::{bulk_decode, bulk_encode, decode_u32, encode_u32};
 
-fn bench_vlen_encode(c: &mut Criterion) {
-	let mut buf = [0u8; 5];
-	c.bench_function("vlen_encode", |b| {
-		b.iter(|| {
-			let v = black_box(12345678u32);
-			encode_u32(&mut buf, v)
-		})
+fn bench_single_encode(c: &mut Criterion) {
+	let mut vlen_buf = [0u8; 5];
+	c.bench_function("single_encode/vlen", |b| {
+		b.iter(|| encode_u32(black_box(&mut vlen_buf), black_box(12345678u32)))
+	});
+
+	let mut leb_buf = [0u8; 5];
+	c.bench_function("single_encode/leb128", |b| {
+		b.iter(|| black_box(12345678u32).encode_var(black_box(&mut leb_buf)))
 	});
 }
 
-fn bench_vlen_decode(c: &mut Criterion) {
-	let mut buf = [0u8; 5];
-	let _len = encode_u32(&mut buf, 12345678u32);
-	c.bench_function("vlen_decode", |b| b.iter(|| decode_u32(&buf)));
-}
+fn bench_single_decode(c: &mut Criterion) {
+	let mut vlen_buf = [0u8; 5];
+	let _ = encode_u32(&mut vlen_buf, 12345678u32);
+	c.bench_function("single_decode/vlen", |b| {
+		b.iter(|| decode_u32(black_box(&vlen_buf)))
+	});
 
-fn bench_leb128_encode(c: &mut Criterion) {
-	let mut buf = [0u8; 5];
-	c.bench_function("leb128_encode", |b| {
-		b.iter(|| {
-			let v = black_box(12345678u32);
-			let mut cursor = Cursor::new(&mut buf[..]);
-			cursor.write_varint(v).unwrap();
-			cursor.position() as usize
-		})
+	let mut leb_buf = [0u8; 5];
+	let _ = 12345678u32.encode_var(&mut leb_buf);
+	c.bench_function("single_decode/leb128", |b| {
+		b.iter(|| u32::decode_var(black_box(&leb_buf)).unwrap())
 	});
 }
 
-fn bench_leb128_decode(c: &mut Criterion) {
-	let mut buf = [0u8; 5];
-	let mut cursor = Cursor::new(&mut buf[..]);
-	cursor.write_varint(12345678u32).unwrap();
-	let len = cursor.position() as usize;
-	c.bench_function("leb128_decode", |b| {
-		b.iter(|| {
-			let mut cursor = Cursor::new(&buf[..len]);
-			cursor.read_varint::<u32>().unwrap()
-		})
-	});
-}
-
-fn bench_vlen_bulk_encode(c: &mut Criterion) {
-	let mut buf = [0u8; 5 * 1024];
-	let values: Vec<u32> = (0..1024)
+fn mixed_values() -> Vec<u32> {
+	(0..1024u32)
 		.map(|i| match i % 4 {
-			0 => i as u32,
-			1 => 1000 + i as u32,
-			2 => 1000000 + i as u32,
-			_ => 1000000000 + i as u32,
+			0 => i,
+			1 => 1000 + i,
+			2 => 1_000_000 + i,
+			_ => 1_000_000_000 + i,
 		})
-		.collect();
-
-	c.bench_function("vlen_bulk_encode", |b| {
-		b.iter(|| bulk_encode(&mut buf, &values))
-	});
+		.collect()
 }
 
-fn bench_vlen_bulk_decode(c: &mut Criterion) {
-	let mut buf = [0u8; 5 * 1024];
-	let values: Vec<u32> = (0..1024)
-		.map(|i| match i % 4 {
-			0 => i as u32,
-			1 => 1000 + i as u32,
-			2 => 1000000 + i as u32,
-			_ => 1000000000 + i as u32,
-		})
-		.collect();
+fn bench_bulk_encode(c: &mut Criterion) {
+	let values = mixed_values();
+	let mut buf = vec![0u8; values.len() * 5];
 
-	let encoded_len = bulk_encode(&mut buf, &values).unwrap();
-	let mut decoded_values = [0u32; 1024];
-
-	c.bench_function("vlen_bulk_decode", |b| {
-		b.iter(|| bulk_decode(&buf[..encoded_len], &mut decoded_values))
+	c.bench_function("bulk_encode/vlen", |b| {
+		b.iter(|| bulk_encode(black_box(&mut buf), black_box(&values)).unwrap())
 	});
-}
 
-fn bench_leb128_bulk_encode(c: &mut Criterion) {
-	let mut buf = [0u8; 5 * 1024];
-	let values: Vec<u32> = (0..1024)
-		.map(|i| match i % 4 {
-			0 => i as u32,
-			1 => 1000 + i as u32,
-			2 => 1000000 + i as u32,
-			_ => 1000000000 + i as u32,
-		})
-		.collect();
-
-	c.bench_function("leb128_bulk_encode", |b| {
+	c.bench_function("bulk_encode/leb128", |b| {
 		b.iter(|| {
-			let mut cursor = Cursor::new(&mut buf[..]);
-			for &value in &values {
-				cursor.write_varint(value).unwrap();
+			let mut offset = 0;
+			for &value in black_box(&values) {
+				offset += value.encode_var(&mut buf[offset..]);
 			}
-			cursor.position() as usize
+			offset
 		})
 	});
 }
 
-fn bench_leb128_bulk_decode(c: &mut Criterion) {
-	let mut buf = [0u8; 5 * 1024];
-	let values: Vec<u32> = (0..1024)
-		.map(|i| match i % 4 {
-			0 => i as u32,
-			1 => 1000 + i as u32,
-			2 => 1000000 + i as u32,
-			_ => 1000000000 + i as u32,
-		})
-		.collect();
+fn bench_bulk_decode(c: &mut Criterion) {
+	let values = mixed_values();
 
-	let mut cursor = Cursor::new(&mut buf[..]);
+	let mut vlen_buf = vec![0u8; values.len() * 5];
+	let vlen_len = bulk_encode(&mut vlen_buf, &values).unwrap();
+	let vlen_encoded = &vlen_buf[..vlen_len];
+	let mut decoded = vec![0u32; values.len()];
+
+	c.bench_function("bulk_decode/vlen", |b| {
+		b.iter(|| {
+			bulk_decode(black_box(vlen_encoded), black_box(&mut decoded))
+				.unwrap()
+		})
+	});
+
+	let mut leb_buf = vec![0u8; values.len() * 5];
+	let mut leb_len = 0;
 	for &value in &values {
-		cursor.write_varint(value).unwrap();
+		leb_len += value.encode_var(&mut leb_buf[leb_len..]);
 	}
-	let encoded_len = cursor.position() as usize;
-	let mut decoded_values = [0u32; 1024];
+	let leb_encoded = &leb_buf[..leb_len];
 
-	c.bench_function("leb128_bulk_decode", |b| {
+	c.bench_function("bulk_decode/leb128", |b| {
 		b.iter(|| {
-			let mut cursor = Cursor::new(&buf[..encoded_len]);
-			for i in 0..1024 {
-				decoded_values[i] = cursor.read_varint::<u32>().unwrap();
+			let mut offset = 0;
+			for slot in decoded.iter_mut() {
+				let (value, len) =
+					u32::decode_var(black_box(&leb_encoded[offset..])).unwrap();
+				*slot = value;
+				offset += len;
 			}
+			offset
 		})
 	});
 }
 
 criterion_group!(
 	benches,
-	bench_vlen_encode,
-	bench_vlen_decode,
-	bench_leb128_encode,
-	bench_leb128_decode,
-	bench_vlen_bulk_encode,
-	bench_vlen_bulk_decode,
-	bench_leb128_bulk_encode,
-	bench_leb128_bulk_decode
+	bench_single_encode,
+	bench_single_decode,
+	bench_bulk_encode,
+	bench_bulk_decode,
 );
 criterion_main!(benches);

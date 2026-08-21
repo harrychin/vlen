@@ -1,14 +1,16 @@
-//! Serde integration for vlen encoding
+//! Serde integration for vlen encoding.
 //!
-//! This module provides `Serialize` and `Deserialize` implementations for all
-//! supported numeric types using vlen encoding. This allows you to use vlen
-//! encoding with serde-based serialization formats.
+//! The `Vlen*` wrapper types serialize their inner value through the
+//! vlen codec. The representation adapts to the format: binary formats
+//! (bincode, postcard, ...) receive the raw encoded bytes, while
+//! human-readable formats (JSON, TOML, ...) receive the bytes as a
+//! base64 string. Neither path allocates.
 //!
 //! ## Example
 //!
 //! ```rust
-//! use serde::{Serialize, Deserialize};
-//! use vlen::serde::{VlenU32, VlenI64};
+//! use serde::{Deserialize, Serialize};
+//! use vlen::serde::{VlenI64, VlenU32};
 //!
 //! #[derive(Serialize, Deserialize)]
 //! struct MyStruct {
@@ -21,564 +23,216 @@
 //!     timestamp: VlenI64(-1234567890),
 //! };
 //!
-//! // Serialize to JSON (or any other serde format)
 //! let json = serde_json::to_string(&data).unwrap();
-//! let deserialized: MyStruct = serde_json::from_str(&json).unwrap();
-//!
-//! assert_eq!(data.id.0, deserialized.id.0);
-//! assert_eq!(data.timestamp.0, deserialized.timestamp.0);
+//! let back: MyStruct = serde_json::from_str(&json).unwrap();
+//! assert_eq!(data.id, back.id);
+//! assert_eq!(data.timestamp, back.timestamp);
 //! ```
 
-#[cfg(feature = "serde")]
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{decode::Decode, encode::Encode};
-use core::ops;
+use crate::decode::Decode;
+use crate::encode::Encode;
 
-/// A wrapper type that serializes and deserializes `u16` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenU16(pub u16);
+/// Longest base64 text for any encoding (17 bytes -> 24 characters).
+const MAX_BASE64_LEN: usize = 24;
 
-/// A wrapper type that serializes and deserializes `u32` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenU32(pub u32);
+macro_rules! vlen_wrapper {
+	(
+		$(#[$docs:meta])*
+		$wrapper:ident($inner:ident) $(, $derive:ident)*
+	) => {
+		$(#[$docs])*
+		#[derive(
+			Debug, Default, Clone, Copy, PartialEq, PartialOrd $(, $derive)*
+		)]
+		#[repr(transparent)]
+		pub struct $wrapper(pub $inner);
 
-/// A wrapper type that serializes and deserializes `u64` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenU64(pub u64);
+		impl From<$inner> for $wrapper {
+			#[inline]
+			fn from(value: $inner) -> Self {
+				$wrapper(value)
+			}
+		}
 
-/// A wrapper type that serializes and deserializes `u128` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenU128(pub u128);
+		impl From<$wrapper> for $inner {
+			#[inline]
+			fn from(wrapper: $wrapper) -> Self {
+				wrapper.0
+			}
+		}
 
-/// A wrapper type that serializes and deserializes `i16` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenI16(pub i16);
+		impl core::ops::Deref for $wrapper {
+			type Target = $inner;
 
-/// A wrapper type that serializes and deserializes `i32` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenI32(pub i32);
+			#[inline]
+			fn deref(&self) -> &Self::Target {
+				&self.0
+			}
+		}
 
-/// A wrapper type that serializes and deserializes `i64` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenI64(pub i64);
+		impl core::ops::DerefMut for $wrapper {
+			#[inline]
+			fn deref_mut(&mut self) -> &mut Self::Target {
+				&mut self.0
+			}
+		}
 
-/// A wrapper type that serializes and deserializes `i128` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VlenI128(pub i128);
-
-/// A wrapper type that serializes and deserializes `f32` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VlenF32(pub f32);
-
-/// A wrapper type that serializes and deserializes `f64` values using vlen encoding.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VlenF64(pub f64);
-
-// Macro to generate serde implementations for unsigned integer types
-macro_rules! impl_serde_unsigned {
-	($wrapper:ident, $inner:ty) => {
-		#[cfg(feature = "serde")]
 		impl Serialize for $wrapper {
-			fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-			where
-				S: Serializer,
-			{
-				let mut buf = [0u8; 17];
-				let len = <$inner>::encode(&mut buf, self.0)
-					.map_err(|e| serde::ser::Error::custom(e))?;
-				#[cfg(feature = "alloc")]
-				{
-					use alloc::string::String;
-					let base64 = base64::encode(&buf[..len]);
-					serializer.serialize_str(&base64)
-				}
-				#[cfg(not(feature = "alloc"))]
-				{
+			fn serialize<S: Serializer>(
+				&self,
+				serializer: S,
+			) -> Result<S::Ok, S::Error> {
+				let mut buf = [0u8; <$inner as Encode>::MAX_ENCODED_SIZE];
+				let len = self
+					.0
+					.encode(&mut buf)
+					.map_err(serde::ser::Error::custom)?;
+				if serializer.is_human_readable() {
+					let mut text = [0u8; MAX_BASE64_LEN];
+					let text_len = BASE64
+						.encode_slice(&buf[..len], &mut text)
+						.map_err(serde::ser::Error::custom)?;
+					let text = core::str::from_utf8(&text[..text_len])
+						.expect("base64 output is ASCII");
+					serializer.serialize_str(text)
+				} else {
 					serializer.serialize_bytes(&buf[..len])
 				}
 			}
 		}
 
-		#[cfg(feature = "serde")]
 		impl<'de> Deserialize<'de> for $wrapper {
-			fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-			where
-				D: Deserializer<'de>,
-			{
-				#[cfg(feature = "alloc")]
-				{
-					use alloc::string::String;
-					let s = String::deserialize(deserializer)?;
-					let bytes = base64::decode(&s)
-						.map_err(|e| serde::de::Error::custom(e))?;
-					let value = match core::any::type_name::<$inner>() {
-						"u16" => {
-							let mut arr = [0u8; 3];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"u32" => {
-							let mut arr = [0u8; 5];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"u64" => {
-							let mut arr = [0u8; 9];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"u128" => {
-							let mut arr = [0u8; 17];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						_ => {
-							return Err(serde::de::Error::custom(
-								"unsupported type for vlen deserialization",
-							))
-						},
-					};
-					let (value, _) =
-						value.map_err(|e| serde::de::Error::custom(e))?;
-					Ok($wrapper(value))
+			fn deserialize<D: Deserializer<'de>>(
+				deserializer: D,
+			) -> Result<Self, D::Error> {
+				struct Visitor;
+
+				impl<'de> serde::de::Visitor<'de> for Visitor {
+					type Value = $wrapper;
+
+					fn expecting(
+						&self,
+						f: &mut core::fmt::Formatter<'_>,
+					) -> core::fmt::Result {
+						write!(
+							f,
+							concat!(
+								"a vlen-encoded ",
+								stringify!($inner)
+							)
+						)
+					}
+
+					fn visit_str<E: serde::de::Error>(
+						self,
+						text: &str,
+					) -> Result<Self::Value, E> {
+						if text.len() > MAX_BASE64_LEN {
+							return Err(E::invalid_length(
+								text.len(),
+								&self,
+							));
+						}
+						// Base64 never expands beyond 3/4 of its input.
+						let mut bytes = [0u8; MAX_BASE64_LEN];
+						let len = BASE64
+							.decode_slice(text, &mut bytes)
+							.map_err(E::custom)?;
+						self.visit_bytes(&bytes[..len])
+					}
+
+					fn visit_bytes<E: serde::de::Error>(
+						self,
+						bytes: &[u8],
+					) -> Result<Self::Value, E> {
+						let (value, len) =
+							<$inner as Decode>::decode(bytes)
+								.map_err(E::custom)?;
+						if len != bytes.len() {
+							return Err(E::invalid_length(
+								bytes.len(),
+								&self,
+							));
+						}
+						Ok($wrapper(value))
+					}
+
+					fn visit_seq<A: serde::de::SeqAccess<'de>>(
+						self,
+						mut seq: A,
+					) -> Result<Self::Value, A::Error> {
+						// Some binary formats represent bytes as a
+						// sequence of u8.
+						let mut bytes =
+							[0u8; <$inner as Encode>::MAX_ENCODED_SIZE];
+						let mut len = 0;
+						while let Some(byte) = seq.next_element::<u8>()? {
+							if len >= bytes.len() {
+								return Err(
+									serde::de::Error::invalid_length(
+										len + 1,
+										&self,
+									),
+								);
+							}
+							bytes[len] = byte;
+							len += 1;
+						}
+						self.visit_bytes(&bytes[..len])
+					}
 				}
-				#[cfg(not(feature = "alloc"))]
-				{
-					let bytes = <&[u8]>::deserialize(deserializer)?;
-					let value = match core::any::type_name::<$inner>() {
-						"u16" => {
-							let mut arr = [0u8; 3];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"u32" => {
-							let mut arr = [0u8; 5];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"u64" => {
-							let mut arr = [0u8; 9];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"u128" => {
-							let mut arr = [0u8; 17];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						_ => {
-							return Err(serde::de::Error::custom(
-								"unsupported type for vlen deserialization",
-							))
-						},
-					};
-					let (value, _) =
-						value.map_err(|e| serde::de::Error::custom(e))?;
-					Ok($wrapper(value))
+
+				if deserializer.is_human_readable() {
+					deserializer.deserialize_str(Visitor)
+				} else {
+					deserializer.deserialize_bytes(Visitor)
 				}
 			}
 		}
 	};
 }
 
-// Macro to generate serde implementations for signed integer types
-macro_rules! impl_serde_signed {
-	($wrapper:ident, $inner:ty) => {
-		#[cfg(feature = "serde")]
-		impl Serialize for $wrapper {
-			fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-			where
-				S: Serializer,
-			{
-				let mut buf = [0u8; 17];
-				let len = <$inner>::encode(&mut buf, self.0)
-					.map_err(|e| serde::ser::Error::custom(e))?;
-				#[cfg(feature = "alloc")]
-				{
-					use alloc::string::String;
-					let base64 = base64::encode(&buf[..len]);
-					serializer.serialize_str(&base64)
-				}
-				#[cfg(not(feature = "alloc"))]
-				{
-					serializer.serialize_bytes(&buf[..len])
-				}
-			}
-		}
-
-		#[cfg(feature = "serde")]
-		impl<'de> Deserialize<'de> for $wrapper {
-			fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-			where
-				D: Deserializer<'de>,
-			{
-				#[cfg(feature = "alloc")]
-				{
-					use alloc::string::String;
-					let s = String::deserialize(deserializer)?;
-					let bytes = base64::decode(&s)
-						.map_err(|e| serde::de::Error::custom(e))?;
-					let value = match core::any::type_name::<$inner>() {
-						"i16" => {
-							let mut arr = [0u8; 3];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"i32" => {
-							let mut arr = [0u8; 5];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"i64" => {
-							let mut arr = [0u8; 9];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"i128" => {
-							let mut arr = [0u8; 17];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						_ => {
-							return Err(serde::de::Error::custom(
-								"unsupported type for vlen deserialization",
-							))
-						},
-					};
-					let (value, _) =
-						value.map_err(|e| serde::de::Error::custom(e))?;
-					Ok($wrapper(value))
-				}
-				#[cfg(not(feature = "alloc"))]
-				{
-					let bytes = <&[u8]>::deserialize(deserializer)?;
-					let value = match core::any::type_name::<$inner>() {
-						"i16" => {
-							let mut arr = [0u8; 3];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"i32" => {
-							let mut arr = [0u8; 5];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"i64" => {
-							let mut arr = [0u8; 9];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"i128" => {
-							let mut arr = [0u8; 17];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						_ => {
-							return Err(serde::de::Error::custom(
-								"unsupported type for vlen deserialization",
-							))
-						},
-					};
-					let (value, _) =
-						value.map_err(|e| serde::de::Error::custom(e))?;
-					Ok($wrapper(value))
-				}
-			}
-		}
-	};
+vlen_wrapper! {
+    /// Serializes a `u16` using vlen encoding.
+	VlenU16(u16), Eq, Ord, Hash
 }
-
-// Macro to generate serde implementations for floating-point types
-macro_rules! impl_serde_float {
-	($wrapper:ident, $inner:ty) => {
-		#[cfg(feature = "serde")]
-		impl Serialize for $wrapper {
-			fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-			where
-				S: Serializer,
-			{
-				let mut buf = [0u8; 17];
-				let len = <$inner>::encode(&mut buf, self.0)
-					.map_err(|e| serde::ser::Error::custom(e))?;
-				#[cfg(feature = "alloc")]
-				{
-					use alloc::string::String;
-					let base64 = base64::encode(&buf[..len]);
-					serializer.serialize_str(&base64)
-				}
-				#[cfg(not(feature = "alloc"))]
-				{
-					serializer.serialize_bytes(&buf[..len])
-				}
-			}
-		}
-
-		#[cfg(feature = "serde")]
-		impl<'de> Deserialize<'de> for $wrapper {
-			fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-			where
-				D: Deserializer<'de>,
-			{
-				#[cfg(feature = "alloc")]
-				{
-					use alloc::string::String;
-					let s = String::deserialize(deserializer)?;
-					let bytes = base64::decode(&s)
-						.map_err(|e| serde::de::Error::custom(e))?;
-					let value = match core::any::type_name::<$inner>() {
-						"f32" => {
-							let mut arr = [0u8; 5];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						"f64" => {
-							let mut arr = [0u8; 9];
-							arr[..bytes.len()].copy_from_slice(&bytes);
-							<$inner>::decode(&arr)
-						},
-						_ => {
-							return Err(serde::de::Error::custom(
-								"unsupported type for vlen deserialization",
-							))
-						},
-					};
-					let (value, _) =
-						value.map_err(|e| serde::de::Error::custom(e))?;
-					Ok($wrapper(value))
-				}
-				#[cfg(not(feature = "alloc"))]
-				{
-					let bytes = <&[u8]>::deserialize(deserializer)?;
-					let value = match core::any::type_name::<$inner>() {
-						"f32" => {
-							let mut arr = [0u8; 5];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						"f64" => {
-							let mut arr = [0u8; 9];
-							arr[..bytes.len()].copy_from_slice(bytes);
-							<$inner>::decode(&arr)
-						},
-						_ => {
-							return Err(serde::de::Error::custom(
-								"unsupported type for vlen deserialization",
-							))
-						},
-					};
-					let (value, _) =
-						value.map_err(|e| serde::de::Error::custom(e))?;
-					Ok($wrapper(value))
-				}
-			}
-		}
-	};
+vlen_wrapper! {
+    /// Serializes a `u32` using vlen encoding.
+	VlenU32(u32), Eq, Ord, Hash
 }
-
-// Generate serde implementations for all types
-impl_serde_unsigned!(VlenU16, u16);
-impl_serde_unsigned!(VlenU32, u32);
-impl_serde_unsigned!(VlenU64, u64);
-impl_serde_unsigned!(VlenU128, u128);
-
-impl_serde_signed!(VlenI16, i16);
-impl_serde_signed!(VlenI32, i32);
-impl_serde_signed!(VlenI64, i64);
-impl_serde_signed!(VlenI128, i128);
-
-impl_serde_float!(VlenF32, f32);
-impl_serde_float!(VlenF64, f64);
-
-// Implement From traits for easy conversion
-impl From<u16> for VlenU16 {
-	fn from(value: u16) -> Self {
-		VlenU16(value)
-	}
+vlen_wrapper! {
+    /// Serializes a `u64` using vlen encoding.
+	VlenU64(u64), Eq, Ord, Hash
 }
-
-impl From<u32> for VlenU32 {
-	fn from(value: u32) -> Self {
-		VlenU32(value)
-	}
+vlen_wrapper! {
+    /// Serializes a `u128` using vlen encoding.
+	VlenU128(u128), Eq, Ord, Hash
 }
-
-impl From<u64> for VlenU64 {
-	fn from(value: u64) -> Self {
-		VlenU64(value)
-	}
+vlen_wrapper! {
+    /// Serializes an `i16` using vlen encoding.
+	VlenI16(i16), Eq, Ord, Hash
 }
-
-impl From<u128> for VlenU128 {
-	fn from(value: u128) -> Self {
-		VlenU128(value)
-	}
+vlen_wrapper! {
+    /// Serializes an `i32` using vlen encoding.
+	VlenI32(i32), Eq, Ord, Hash
 }
-
-impl From<i16> for VlenI16 {
-	fn from(value: i16) -> Self {
-		VlenI16(value)
-	}
+vlen_wrapper! {
+    /// Serializes an `i64` using vlen encoding.
+	VlenI64(i64), Eq, Ord, Hash
 }
-
-impl From<i32> for VlenI32 {
-	fn from(value: i32) -> Self {
-		VlenI32(value)
-	}
+vlen_wrapper! {
+    /// Serializes an `i128` using vlen encoding.
+	VlenI128(i128), Eq, Ord, Hash
 }
-
-impl From<i64> for VlenI64 {
-	fn from(value: i64) -> Self {
-		VlenI64(value)
-	}
+vlen_wrapper! {
+    /// Serializes an `f32` using vlen encoding.
+	VlenF32(f32)
 }
-
-impl From<i128> for VlenI128 {
-	fn from(value: i128) -> Self {
-		VlenI128(value)
-	}
-}
-
-impl From<f32> for VlenF32 {
-	fn from(value: f32) -> Self {
-		VlenF32(value)
-	}
-}
-
-impl From<f64> for VlenF64 {
-	fn from(value: f64) -> Self {
-		VlenF64(value)
-	}
-}
-
-// Implement Deref for easy access to inner values
-impl ops::Deref for VlenU16 {
-	type Target = u16;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenU32 {
-	type Target = u32;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenU64 {
-	type Target = u64;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenU128 {
-	type Target = u128;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenI16 {
-	type Target = i16;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenI32 {
-	type Target = i32;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenI64 {
-	type Target = i64;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenI128 {
-	type Target = i128;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenF32 {
-	type Target = f32;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-impl ops::Deref for VlenF64 {
-	type Target = f64;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-// Implement DerefMut for mutable access
-impl ops::DerefMut for VlenU16 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenU32 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenU64 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenU128 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenI16 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenI32 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenI64 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenI128 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenF32 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
-}
-
-impl ops::DerefMut for VlenF64 {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
-	}
+vlen_wrapper! {
+    /// Serializes an `f64` using vlen encoding.
+	VlenF64(f64)
 }

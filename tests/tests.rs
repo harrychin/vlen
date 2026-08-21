@@ -23,8 +23,8 @@ fn u16_cases() -> Vec<(u16, &'static [u8])> {
 		(0x007F, &[0x7F]),
 		(0x0080, &[0b10000000, 0x02]),
 		(0x3FFF, &[0b10111111, 0xFF]),
-		(0x4000, &[0xDE, 0x00, 0x40]),
-		(0xFFFF, &[0xDE, 0xFF, 0xFF]),
+		(0x4000, &[0xC0, 0x00, 0x02]),
+		(0xFFFF, &[0xDF, 0xFF, 0x07]),
 	]
 }
 
@@ -98,16 +98,16 @@ fn i16_cases() -> Vec<(i16, &'static [u8])> {
 		(0x0000, &[0x00]),
 		(0x007F, &[0xBE, 0x03]),
 		(0x0080, &[0x80, 0x04]),
-		(0x3FFF, &[0xDE, 0xFE, 0x7F]),
-		(0x4000, &[0xDE, 0x00, 0x80]),
-		(0x7FFF, &[0xDE, 0xFE, 0xFF]),
+		(0x3FFF, &[0xDE, 0xFF, 0x03]),
+		(0x4000, &[0xC0, 0x00, 0x04]),
+		(0x7FFF, &[0xDE, 0xFF, 0x07]),
 		(-0x0001, &[0x01]),
 		(-0x007F, &[0xBD, 0x03]),
 		(-0x0080, &[0xBF, 0x03]),
-		(-0x3FFF, &[0xDE, 0xFD, 0x7F]),
-		(-0x4000, &[0xDE, 0xFF, 0x7F]),
-		(-0x7FFF, &[0xDE, 0xFD, 0xFF]),
-		(-0x8000, &[0xDE, 0xFF, 0xFF]),
+		(-0x3FFF, &[0xDD, 0xFF, 0x03]),
+		(-0x4000, &[0xDF, 0xFF, 0x03]),
+		(-0x7FFF, &[0xDD, 0xFF, 0x07]),
+		(-0x8000, &[0xDF, 0xFF, 0x07]),
 	]
 }
 
@@ -502,7 +502,7 @@ fn test_large_i128() {
 	assert_eq!(len, decoded_len, "Length mismatch");
 
 	// Check encoded_size consistency
-	let size = vlen::encoded_size(value).unwrap();
+	let size = vlen::encoded_size(value);
 	assert_eq!(size, len, "encoded_size mismatch for large negative i128");
 }
 
@@ -532,29 +532,14 @@ fn test_overlong_encodings() {
 }
 
 #[test]
-#[cfg(feature = "simd")]
-fn test_bulk_decode_u32() {
+fn test_bulk_u32_specialized() {
 	let mut buf = [0u8; 20];
 	let values = [1u32, 1000, 1000000, 1000000000];
-	let encoded_len = unsafe { vlen::bulk_encode_u32(&mut buf, &values) };
+	let encoded_len = vlen::bulk_encode_u32(&mut buf, &values).unwrap();
 	let mut decoded_values = [0u32; 4];
-	let decoded_len = unsafe {
+	let decoded_len =
 		vlen::bulk_decode_u32(&buf[..encoded_len], &mut decoded_values)
-	};
-	assert_eq!(decoded_len, encoded_len);
-	assert_eq!(values, decoded_values);
-}
-
-#[test]
-#[cfg(feature = "simd")]
-fn test_bulk_decode_u32_mixed() {
-	let mut buf = [0u8; 20];
-	let values = [1u32, 1000, 1000000, 1000000000];
-	let encoded_len = unsafe { vlen::bulk_encode_u32(&mut buf, &values) };
-	let mut decoded_values = [0u32; 4];
-	let decoded_len = unsafe {
-		vlen::bulk_decode_u32(&buf[..encoded_len], &mut decoded_values)
-	};
+			.unwrap();
 	assert_eq!(decoded_len, encoded_len);
 	assert_eq!(values, decoded_values);
 }
@@ -572,7 +557,7 @@ fn test_generic_encode_decode() {
 #[test]
 fn test_generic_encoded_size() {
 	let value = 12345u32;
-	let size = vlen::encoded_size(value).unwrap();
+	let size = vlen::encoded_size(value);
 	let mut buf = [0u8; 17];
 	let encoded_len = vlen::encode(&mut buf, value).unwrap();
 	assert_eq!(size, encoded_len);
@@ -630,25 +615,10 @@ fn test_buffer_size_errors() {
 }
 
 #[test]
-#[cfg(feature = "simd")]
-fn test_safe_bulk_operations() {
-	let values = [1u32, 1000, 1000000, 1000000000];
-	let mut buf = [0u8; 20];
-	let encoded_len = vlen::bulk_encode_u32_safe(&mut buf, &values).unwrap();
-	let mut decoded_values = [0u32; 4];
-	let decoded_len =
-		vlen::bulk_decode_u32_safe(&buf[..encoded_len], &mut decoded_values)
-			.unwrap();
-	assert_eq!(decoded_len, encoded_len);
-	assert_eq!(values, decoded_values);
-}
-
-#[test]
-#[cfg(feature = "simd")]
-fn test_safe_bulk_buffer_too_small() {
+fn test_bulk_buffer_too_small() {
 	let values = [1u32, 1000, 1000000, 1000000000];
 	let mut buf = [0u8; 5];
-	let result = vlen::bulk_encode_u32_safe(&mut buf, &values);
+	let result = vlen::bulk_encode_u32(&mut buf, &values);
 	assert!(result.is_err());
 }
 
