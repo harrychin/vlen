@@ -1,68 +1,64 @@
-# vlen: High-performance variable-length numeric encoding
+# vlen
 
-`vlen` is an enhanced version of the original `vu128` variable-length
-numeric encoding. Numeric types up to 128 bits are supported (integers
-and floating-point), with smaller values being encoded using fewer
-bytes. Every integer width shares one wire format, so a value encoded
-as one type decodes as any wider type.
-
-The compression ratio of `vlen` equals or exceeds the widely used
-[VLQ] and [LEB128] encodings, and it decodes faster on modern pipelined
-architectures because the encoded length is announced by the first byte
-instead of continuation bits spread across the value.
-
-[VLQ]: https://en.wikipedia.org/wiki/Variable-length_quantity
-[LEB128]: https://en.wikipedia.org/wiki/LEB128
-
-## Highlights
-
-- **Safe**: no `unsafe` anywhere (`#![deny(unsafe_code)]`), and the
-  checked API validates untrusted input with typed errors instead of
-  panicking or desynchronizing.
-- **Fast**: branch-light single-value codec, plus bulk operations with
-  a SWAR fast path for runs of small values.
-- **`const fn` everywhere**: every array-based encode/decode function
-  works in const contexts.
-- **`no_std`**: the core has zero dependencies and builds for embedded
-  targets; `serde` support stays `no_std` and allocation-free.
-
-## Usage
-
-### Encoding and decoding
-
-The `Encode` and `Decode` traits work on ordinary slices and validate
-everything: buffers only need to fit the value's actual encoded size,
-truncated input and invalid prefixes are rejected with typed errors,
-and decoding a value that overflows the target type fails cleanly.
+**The fastest-decoding self-delimiting varint for Rust.** Integers and
+floats up to 128 bits, smaller values in fewer bytes, zero
+dependencies, zero unsafe code, `no_std`.
 
 ```rust
 use vlen::{Decode, Encode};
 
 let mut buf = [0u8; 5];
-let value = 12345u32;
-
-let len = value.encode(&mut buf)?;
-assert_eq!(len, value.encoded_size());
-
-let (decoded, decoded_len) = u32::decode(&buf[..len])?;
-assert_eq!(decoded, value);
-assert_eq!(decoded_len, len);
+let len = 12345u32.encode(&mut buf)?;          // 2 bytes
+let (value, _) = u32::decode(&buf[..len])?;    // 12345
 # Ok::<(), vlen::Error>(())
 ```
 
-The array-based functions are the infallible fast core; their array
-parameter types guarantee room for any value of the type, and they are
-all usable in const contexts:
+## Why vlen
+
+**It decodes faster than every varint we could find to compare
+against.** The length lives in the first byte instead of continuation
+bits spread across the value, so decoding is one predicted branch. On
+1,024-value streams (Apple M-series; `benches/comparison.rs`, all
+codecs through their in-memory slice APIs):
+
+|                    | vlen | LEB128 | prost (protobuf) | vint64 |
+|--------------------|-----:|-------:|------:|-------:|
+| bulk decode, small values | **0.12 µs** | 2.24 µs | 2.06 µs | 2.44 µs |
+| bulk decode, mixed sizes  | **1.45 µs** | 2.70 µs | 2.19 µs | 2.67 µs |
+| bulk encode, small values | **0.15 µs** | 0.88 µs | 1.03 µs | 2.10 µs |
+| single decode      | **0.78 ns** | 2.40 ns | 0.84 ns | 2.27 ns |
+
+Compression matches LEB128 byte-for-byte below 2^28 — where most
+varint data lives — and caps at 9 bytes for `u64`, where LEB128 needs
+up to 10.
+
+**It is safe to point at untrusted bytes.** The crate contains no
+unsafe code (`#![deny(unsafe_code)]`). The checked API returns typed
+errors — never panics, never desynchronizes on truncated input,
+invalid prefixes, or out-of-range values — and decoding needs only the
+bytes a value actually occupies.
+
+**It runs everywhere, at compile time too.** The core is dependency-
+free `no_std` (CI builds it for `thumbv7em-none-eabi`), and every
+array-based codec function is `const fn`:
 
 ```rust
 const LEN: usize = {
-	let mut buf = [0u8; 5];
-	vlen::encode_u32(&mut buf, 12345)
+    let mut buf = [0u8; 5];
+    vlen::encode_u32(&mut buf, 12345)
 };
-assert_eq!(LEN, 2);
 ```
 
-### Bulk operations and streams
+**One wire format across all widths.** A value encoded as `u16`
+produces the same bytes as `u32`, `u64`, or `u128`, and decodes at any
+width that can hold it — no cross-type surprises when a field grows.
+
+**Bulk operations that exploit your data's shape.** The specialized
+bulk functions detect runs of similarly-sized values and move them
+without per-value length arithmetic — up to 4x faster than the
+per-value loop on small-value streams, in portable safe Rust on every
+architecture. A `decode_iter` streaming iterator handles streams of
+unknown length:
 
 ```rust
 use vlen::{bulk_encode, decode_iter};
@@ -72,207 +68,44 @@ let mut buf = [0u8; 36];
 let len = bulk_encode(&mut buf, &values)?;
 
 let decoded: Result<Vec<u64>, vlen::Error> =
-	decode_iter(&buf[..len]).collect();
+    decode_iter(&buf[..len]).collect();
 assert_eq!(decoded?, values);
 # Ok::<(), vlen::Error>(())
 ```
 
-All bulk functions produce and consume the canonical byte stream —
-output is byte-for-byte identical to encoding each value individually,
-and the bulk and per-value APIs interoperate freely. The specialized
-`bulk_encode_u32`/`bulk_decode_u32` and `bulk_encode_u64`/
-`bulk_decode_u64` detect runs of equal-length encodings — whose value
-boundaries are known in advance — and move them with SWAR lanes or
-class-known single stores and masked loads, in portable safe Rust.
-Prefer them whenever your data has runs of similarly-sized values;
-only adversarially interleaved sizes favor the generic functions.
-
-Indicative numbers for 1,024 values (Apple M-series, `--quick`
-criterion run — measure on your own hardware):
-
-| Distribution    | specialized vs generic encode | specialized vs generic decode |
-|-----------------|------------------------------:|------------------------------:|
-| all one-byte    | **~4x faster**                | **~4x faster**                |
-| all two-byte    | **~1.2x faster**              | **~3.7x faster**              |
-| all three-byte  | **~1.5x faster**              | ~1.2x slower                  |
-| all four-byte   | **~1.7x faster**              | **~2.4x faster**              |
-| all five-byte   | **~3.5x faster**              | **~2x faster**                |
-| mixed / random  | ~1.2-1.4x slower              | ~1.1-1.4x slower              |
-
-### Performance notes
-
-The scalar codec is deliberately branchy rather than branchless: a
-decoder's next read position depends on the current value's length, and
-letting the branch predictor speculate through that chain overlaps
-iterations, which measures substantially faster on modern out-of-order
-cores than a branch-free implementation whose arithmetic becomes the
-serial critical path (a branch-free variant of this codec benchmarked
-about 2.7x slower on unpredictable bulk decodes). Size calculations
-(`encoded_size_*`, `encoded_len`) are branch-free, so summing sizes
-over a slice vectorizes.
-
-vlen is sensitive to inlining. If encode/decode shows up in your
-profiles, build with `lto = "thin"` (or `"fat"`) and consider
-`codegen-units = 1` in your release profile; `-C target-cpu=native`
-helps the SWAR bulk paths.
-
-There are no shuffle-based SIMD kernels, deliberately: with an inline
-self-delimiting varint, discovering where each value starts requires
-reading the previous value's first byte, so wide shuffles cannot
-bypass the boundary chain the way they can for formats with a separate
-control stream (group varint / stream-vbyte) or per-byte continuation
-bits (LEB128). vlen trades that away for the fastest scalar and
-streaming decode; the SWAR run paths recover batch speed exactly where
-boundaries are uniform and therefore known in advance. If your workload
-is columnar bulk u32 compression above all else, a control-stream
-format like stream-vbyte is the better tool.
-
-### Comparison with other encodings
-
-`benches/comparison.rs` measures vlen against LEB128
-(`integer-encoding`), the protobuf varint from `prost`, the `vint64`
-prefix varint, `stream-vbyte` group varint (scalar kernels), and raw
-fixed-width `u32` words. All codecs run through their in-memory slice
-APIs. From the same machine and run:
-
-| Benchmark (1,024 u32) | vlen | leb128 | prost | vint64 | stream-vbyte |
-|-----------------------|-----:|-------:|------:|-------:|-------------:|
-| bulk encode, mixed    | 1.08 µs | 1.67 µs | 1.93 µs | 3.05 µs | **0.86 µs** |
-| bulk decode, mixed    | **1.45 µs** | 2.70 µs | 2.19 µs | 2.67 µs | 1.75 µs |
-| bulk encode, small    | **0.15 µs** | 0.88 µs | 1.03 µs | 2.10 µs | 0.63 µs |
-| bulk decode, small    | **0.12 µs** | 2.24 µs | 2.06 µs | 2.44 µs | 1.26 µs |
-| single encode (4-byte value) | 1.49 ns | 1.99 ns | 2.86 ns | **1.10 ns** | – |
-| single decode (4-byte value) | **0.78 ns** | 2.40 ns | 0.84 ns | 2.27 ns | – |
-
-Caveats: `stream-vbyte` is a different format (external count, separate
-control stream) with an SSE4.1 decoder that outperforms these scalar
-numbers on x86_64, and `prost`/`vint64` are 64-bit codecs fed the same
-values widened to `u64`.
-
-### Serde integration
-
-With the `serde` feature, the `Vlen*` wrapper types serialize through
-the vlen codec. Binary formats (postcard, bincode, ...) receive the raw
-encoded bytes; human-readable formats (JSON, ...) receive base64.
-Neither path allocates, and malformed input is rejected with errors.
-
-```rust
-use serde::{Deserialize, Serialize};
-use vlen::serde::{VlenI64, VlenU32};
-
-#[derive(Serialize, Deserialize)]
-struct MyStruct {
-	id: VlenU32,
-	timestamp: VlenI64,
-}
-```
+**Serde that respects your format.** With the `serde` feature, the
+`Vlen*` wrapper types hand binary formats (postcard, bincode, ...) the
+raw encoded bytes and human-readable formats (JSON, ...) base64 —
+allocation-free either way, hostile input rejected with errors.
 
 ## Features
 
-- **`alloc`**: `Vec`-based convenience functions (`encode_to_vec`,
-  `bulk_encode_to_vec`, `bulk_decode_values`)
-- **`serde`**: serde wrapper types (allocation-free, `no_std`)
-- **`full`**: everything above
+| Feature | Adds |
+|---------|------|
+| `alloc` | `Vec` conveniences: `encode_to_vec`, `bulk_encode_to_vec`, `bulk_decode_values` |
+| `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
+| `full`  | Everything above |
 
-The minimum supported Rust version is **1.85**.
+MSRV: **1.85**. Tested in CI on x86_64 and aarch64, stable and MSRV,
+with clippy, rustfmt, and `no_std` builds gating every change.
 
-## Encoding details
+## When something else fits better
 
-Values in the range `[0, 2^7)` are encoded as a single byte with
-the same bits as the original value.
+If your workload is purely columnar bulk `u32` compression — no
+streaming, no self-delimiting values — a control-stream format like
+`stream-vbyte` can encode mixed-size batches faster. vlen is built for
+the general case: self-delimiting streams you can read value by value.
 
-Values in the range `[2^7, 2^28)` are encoded as a unary length prefix,
-followed by `(length*7)` bits, in little-endian order. This is conceptually
-similar to LEB128, but the continuation bits are placed in upper half
-of the initial byte. This arrangement is also known as a "prefix varint".
+## Learn more
 
-```text
-MSB ------------------ LSB
-
-      10101011110011011110  Input value (0xABCDE)
-   0101010 1111001 1011110  Zero-padded to a multiple of 7 bits
-01010101 11100110 ___11110  Grouped into octets, with 3 continuation bits
-01010101 11100110 11011110  Continuation bits `110` added
-    0x55     0xE6     0xDE  In hexadecimal
-
-        [0xDE, 0xE6, 0x55]  Encoded output (order is little-endian)
-```
-
-Values in the range `[2^28, 2^128)` are encoded as a binary length prefix,
-followed by payload bytes, in little-endian order. To differentiate this
-format from the format of smaller values, the top 4 bits of the first byte
-are set. The length prefix value is the number of payload bytes minus one;
-equivalently it is the total length of the encoded value minus two.
-
-```text
-MSB ------------------------------------ LSB
-
-               10010001101000101011001111000  Input value (0x12345678)
-         00010010 00110100 01010110 01111000  Zero-padded to a multiple of 8 bits
-00010010 00110100 01010110 01111000 11110011  Prefix byte is `0xF0 | (4 - 1)`
-    0x12     0x34     0x56     0x78     0xF3  In hexadecimal
-
-              [0xF3, 0x78, 0x56, 0x34, 0x12]  Encoded output (order is little-endian)
-```
-
-Every integer width uses this same grammar, so the encodings of a value
-are identical whether it is encoded as `u16`, `u32`, `u64`, or `u128`.
-
-## Handling of over-long encodings
-
-The `vlen` format permits over-long encodings, which encode a value using
-a byte sequence that is unnecessarily long:
-
-- Zero-padding beyond that required to reach a multiple of 7 or 8 bits.
-- Using a length prefix byte for a value in the range `[0, 2^7)`.
-- Using a binary length prefix byte for a value in the range `[0, 2^28)`.
-
-The `encode_*` functions in this module will not generate such over-long
-encodings, but the `decode_*` functions will accept them. This is intended
-to allow `vlen` values to be placed in a buffer before the value to be
-written is known. Applications that require a single canonical encoding for
-any given value should perform appropriate checking in their own code.
-
-## Signed integers and floating-point values
-
-Signed integers and IEEE-754 floating-point values may be encoded with
-`vlen` by mapping them to unsigned integers. It is recommended that the
-mapping functions be chosen so as to minimize the number of zeroes in the
-higher-order bits, which enables better compression.
-
-This library includes helper functions that use Protocol Buffer's ["ZigZag"
-encoding] for signed integers and reverse-endian layout for floating-point.
-
-["ZigZag" encoding]: https://protobuf.dev/programming-guides/encoding/#signed-ints
-
-## Breaking changes in 0.4.0
-
-- Errors are a typed [`enum Error`] implementing `core::error::Error`
-  instead of `&'static str`; `encoded_size` and the `Vec` constructors
-  are infallible.
-- `Encode::encode` takes `self` first (`value.encode(&mut buf)`), and
-  the checked API works with exactly-sized buffers on both sides.
-- **Wire format**: `u16`/`i16` three-byte encodings now use the same
-  prefix-varint grammar as the wider types. The previous `0xDE`-prefixed
-  raw form conflicted with the shared grammar and made `u16` streams
-  unreadable as `u32`/`u64`/`u128`. Two- and one-byte `u16` encodings
-  are unchanged.
-- The `simd` feature was removed. Its implementation produced
-  non-canonical output, decoded incorrectly, and contained
-  out-of-bounds accesses. The safe bulk functions (always available)
-  replace it; `bulk_encode_u32_safe` is now `bulk_encode_u32`.
-- The `const_encode`/`const_decode` modules were removed: the main
-  array-based functions are all `const fn` now.
-- Binary serde formats receive raw bytes instead of base64 strings.
-  JSON output is unchanged.
+- [API documentation](https://docs.rs/vlen)
+- [DESIGN.md](DESIGN.md) — wire format specification and performance
+  design notes
+- [CHANGELOG.md](CHANGELOG.md) — release notes and migration guides
 
 ## License
 
-Licensed under **MPL-2.0** to guarantee future openness - see [LICENSE](LICENSE).
-
-Retains `vu128` (ISC/0BSD) attribution in [LICENSE-VU128.txt](LICENSE-VU128.txt).
-
-## Acknowledgments
-
-This crate is based on the original `vu128` implementation by John Millikin,
-with performance improvements and enhancements by Harrison Chin.
+MPL-2.0 — see [LICENSE](LICENSE). Based on the original `vu128`
+implementation by John Millikin (attribution in
+[LICENSE-VU128.txt](LICENSE-VU128.txt)), with performance improvements
+and enhancements by Harrison Chin.

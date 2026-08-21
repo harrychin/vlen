@@ -6,8 +6,9 @@
 //! bytes. Every integer width shares one wire format, so a value encoded
 //! as one type decodes as any wider type.
 //!
-//! The compression ratio of `vlen` equals or exceeds the widely used
-//! [VLQ] and [LEB128] encodings, and it decodes faster on modern
+//! The compression matches the widely used [VLQ] and [LEB128]
+//! encodings for values below `2^28` (and caps at 9 bytes for `u64`,
+//! where LEB128 needs up to 10), and it decodes faster on modern
 //! pipelined architectures because the encoded length is announced by
 //! the first byte instead of continuation bits spread across the value.
 //!
