@@ -361,3 +361,34 @@ fn vec_convenience_functions_round_trip() {
 	let decoded = vlen::bulk_decode_values::<i32>(&encoded).unwrap();
 	assert_eq!(decoded, values);
 }
+
+#[test]
+fn invalid_prefix_wins_over_short_buffer() {
+	// A prefix invalid for the type is reported as InvalidPrefix even
+	// when the buffer is also shorter than the announced encoding.
+	assert_eq!(
+		u32::decode(&[0xF7u8]),
+		Err(Error::InvalidPrefix { prefix: 0xF7 })
+	);
+	assert_eq!(
+		u16::decode(&[0xE5u8]),
+		Err(Error::InvalidPrefix { prefix: 0xE5 })
+	);
+	// A prefix valid for the type but with missing bytes stays
+	// BufferTooSmall.
+	assert_eq!(
+		u32::decode(&[0xF3u8]),
+		Err(Error::BufferTooSmall {
+			needed: 5,
+			available: 1
+		})
+	);
+	// u128 accepts every prefix; only truncation can fail it.
+	assert_eq!(
+		u128::decode(&[0xFFu8]),
+		Err(Error::BufferTooSmall {
+			needed: 17,
+			available: 1
+		})
+	);
+}

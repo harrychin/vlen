@@ -198,38 +198,47 @@ pub trait Decode: Sized {
 	fn decode(buf: &[u8]) -> Result<(Self, usize)>;
 }
 
-/// Validates the prefix and buffer length, then hands a full-size
-/// array to `$decode_fn`. Zero-copy when the slice already holds
-/// `MAX_ENCODED_SIZE` bytes.
-macro_rules! checked_decode {
-	($buf:ident, $size:expr, $decode_fn:ident) => {{
-		let Some(&b0) = $buf.first() else {
-			return Err(Error::BufferTooSmall {
-				needed: 1,
-				available: 0,
-			});
-		};
-		let needed = encoded_len(b0);
-		if needed > $size {
-			return Err(Error::InvalidPrefix { prefix: b0 });
+/// Generates the out-of-line path for slices shorter than the type's
+/// maximum encoding: validate the prefix, copy into a zero-padded
+/// full-size array, decode. Cold — the hot path never comes here.
+macro_rules! decode_short_fn {
+	($name:ident, $t:ty, $size:expr, $decode_fn:ident) => {
+		#[cold]
+		#[inline(never)]
+		fn $name(buf: &[u8]) -> Result<($t, usize)> {
+			let Some(&b0) = buf.first() else {
+				return Err(Error::BufferTooSmall {
+					needed: 1,
+					available: 0,
+				});
+			};
+			let needed = encoded_len(b0);
+			if needed > $size {
+				return Err(Error::InvalidPrefix { prefix: b0 });
+			}
+			if buf.len() >= needed {
+				let mut tmp = [0u8; $size];
+				tmp[..buf.len()].copy_from_slice(buf);
+				Ok($decode_fn(&tmp))
+			} else {
+				Err(Error::BufferTooSmall {
+					needed,
+					available: buf.len(),
+				})
+			}
 		}
-		if let Some(arr) = $buf.first_chunk::<$size>() {
-			Ok($decode_fn(arr))
-		} else if $buf.len() >= needed {
-			let mut tmp = [0u8; $size];
-			tmp[..$buf.len()].copy_from_slice($buf);
-			Ok($decode_fn(&tmp))
-		} else {
-			Err(Error::BufferTooSmall {
-				needed,
-				available: $buf.len(),
-			})
-		}
-	}};
+	};
 }
 
+/// Implements [`Decode`]. When the slice holds a full-size window,
+/// the only invalid input is a binary length prefix announcing more
+/// bytes than the type can use — a single compare against
+/// `$max_prefix` (omitted for u128, whose every prefix is valid).
 macro_rules! impl_decode {
-	($t:ty, $size:expr, $decode_fn:ident) => {
+	($t:ty, $size:expr, $decode_fn:ident, $short_fn:ident
+		$(, $max_prefix:literal)?) => {
+		decode_short_fn!($short_fn, $t, $size, $decode_fn);
+
 		impl Decode for $t {
 			const MAX_ENCODED_SIZE: usize = $size;
 
@@ -237,25 +246,45 @@ macro_rules! impl_decode {
 			// merged into the caller's loop body.
 			#[inline(always)]
 			fn decode(buf: &[u8]) -> Result<(Self, usize)> {
-				checked_decode!(buf, $size, $decode_fn)
+				if let Some(arr) = buf.first_chunk::<$size>() {
+					$(
+						if arr[0] > $max_prefix {
+							return Err(Error::InvalidPrefix {
+								prefix: arr[0],
+							});
+						}
+					)?
+					Ok($decode_fn(arr))
+				} else {
+					$short_fn(buf)
+				}
 			}
 		}
 	};
 }
 
-impl_decode!(u32, 5, decode_u32);
-impl_decode!(u64, 9, decode_u64);
-impl_decode!(u128, 17, decode_u128);
+impl_decode!(u32, 5, decode_u32, decode_u32_short, 0xF3);
+impl_decode!(u64, 9, decode_u64, decode_u64_short, 0xF7);
+impl_decode!(u128, 17, decode_u128, decode_u128_short);
+
+decode_short_fn!(decode_u16_short, u32, 3, decode_u16_wide);
 
 impl Decode for u16 {
 	const MAX_ENCODED_SIZE: usize = 3;
 
-	#[inline]
+	#[inline(always)]
 	fn decode(buf: &[u8]) -> Result<(Self, usize)> {
 		// Decode through the u32 grammar so that three-byte encodings
 		// carrying values above u16::MAX are rejected, not truncated.
-		let (value, len): (u32, usize) =
-			checked_decode!(buf, 3, decode_u16_wide)?;
+		let (value, len) = if let Some(arr) = buf.first_chunk::<3>() {
+			// Anything announcing four or more bytes is invalid.
+			if arr[0] >= 0xE0 {
+				return Err(Error::InvalidPrefix { prefix: arr[0] });
+			}
+			decode_u16_wide(arr)
+		} else {
+			decode_u16_short(buf)?
+		};
 		if value > u16::MAX as u32 {
 			return Err(Error::Overflow);
 		}

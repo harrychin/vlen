@@ -255,9 +255,29 @@ pub trait Encode: Copy {
 }
 
 /// Implements [`Encode`] on top of an array-based encoder plus a size
-/// expression evaluated with the value bound to `$v`.
+/// expression evaluated with the value bound to `$v`. The
+/// shorter-than-maximum buffer case lives in a cold out-of-line
+/// function so the hot path inlined into callers stays small.
 macro_rules! impl_encode {
-	($t:ty, $size:expr, $encode_fn:ident, $v:ident => $size_expr:expr) => {
+	($t:ty, $size:expr, $encode_fn:ident, $short_fn:ident,
+		$v:ident => $size_expr:expr) => {
+		#[cold]
+		#[inline(never)]
+		fn $short_fn(value: $t, buf: &mut [u8]) -> Result<usize> {
+			let mut tmp = [0u8; $size];
+			let len = $encode_fn(&mut tmp, value);
+			match buf.get_mut(..len) {
+				Some(dst) => {
+					dst.copy_from_slice(&tmp[..len]);
+					Ok(len)
+				},
+				None => Err(Error::BufferTooSmall {
+					needed: len,
+					available: buf.len(),
+				}),
+			}
+		}
+
 		impl Encode for $t {
 			const MAX_ENCODED_SIZE: usize = $size;
 
@@ -272,41 +292,38 @@ macro_rules! impl_encode {
 			#[inline(always)]
 			fn encode(self, buf: &mut [u8]) -> Result<usize> {
 				if let Some(arr) = buf.first_chunk_mut::<$size>() {
-					return Ok($encode_fn(arr, self));
-				}
-				let mut tmp = [0u8; $size];
-				let len = $encode_fn(&mut tmp, self);
-				match buf.get_mut(..len) {
-					Some(dst) => {
-						dst.copy_from_slice(&tmp[..len]);
-						Ok(len)
-					},
-					None => Err(Error::BufferTooSmall {
-						needed: len,
-						available: buf.len(),
-					}),
+					Ok($encode_fn(arr, self))
+				} else {
+					$short_fn(self, buf)
 				}
 			}
 		}
 	};
 }
 
-impl_encode!(u16, 3, encode_u16, v => encoded_size_u16(v));
-impl_encode!(u32, 5, encode_u32, v => encoded_size_u32(v));
-impl_encode!(u64, 9, encode_u64, v => encoded_size_u64(v));
-impl_encode!(u128, 17, encode_u128, v => encoded_size_u128(v));
+impl_encode!(u16, 3, encode_u16, encode_u16_short,
+	v => encoded_size_u16(v));
+impl_encode!(u32, 5, encode_u32, encode_u32_short,
+	v => encoded_size_u32(v));
+impl_encode!(u64, 9, encode_u64, encode_u64_short,
+	v => encoded_size_u64(v));
+impl_encode!(u128, 17, encode_u128, encode_u128_short,
+	v => encoded_size_u128(v));
 
-impl_encode!(i16, 3, encode_i16, v => encoded_size_u16(zigzag!(i16, u16, v)));
-impl_encode!(i32, 5, encode_i32, v => encoded_size_u32(zigzag!(i32, u32, v)));
-impl_encode!(i64, 9, encode_i64, v => encoded_size_u64(zigzag!(i64, u64, v)));
+impl_encode!(i16, 3, encode_i16, encode_i16_short,
+	v => encoded_size_u16(zigzag!(i16, u16, v)));
+impl_encode!(i32, 5, encode_i32, encode_i32_short,
+	v => encoded_size_u32(zigzag!(i32, u32, v)));
+impl_encode!(i64, 9, encode_i64, encode_i64_short,
+	v => encoded_size_u64(zigzag!(i64, u64, v)));
 impl_encode!(
-	i128, 17, encode_i128,
+	i128, 17, encode_i128, encode_i128_short,
 	v => encoded_size_u128(zigzag!(i128, u128, v))
 );
 
-impl_encode!(f32, 5, encode_f32, v => {
+impl_encode!(f32, 5, encode_f32, encode_f32_short, v => {
 	encoded_size_u32(v.to_bits().swap_bytes())
 });
-impl_encode!(f64, 9, encode_f64, v => {
+impl_encode!(f64, 9, encode_f64, encode_f64_short, v => {
 	encoded_size_u64(v.to_bits().swap_bytes())
 });
