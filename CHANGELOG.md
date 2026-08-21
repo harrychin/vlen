@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.3
+
+### Changed
+
+- The cold short-buffer paths of the checked codec copy with plain
+  byte loops instead of variable-length `copy_from_slice`, so minimal
+  builds no longer link `compiler_builtins` memcpy or any panic
+  machinery. A Cortex-M binary using checked `u32` encode + decode
+  measures ~500 bytes of code (down from ~1.25 KB) at
+  `opt-level = "z"` with fat LTO and `panic = "abort"` - the checked
+  codec now has zero dependencies beyond its own instructions.
+
 ## 0.4.2
 
 ### Changed

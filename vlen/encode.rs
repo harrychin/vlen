@@ -285,7 +285,11 @@ macro_rules! impl_encode {
 			let len = $encode_fn(&mut tmp, value);
 			match buf.get_mut(..len) {
 				Some(dst) => {
-					dst.copy_from_slice(&tmp[..len]);
+					// Byte loop rather than copy_from_slice: see the
+					// matching note in the decode short path.
+					for (d, &s) in dst.iter_mut().zip(&tmp) {
+						*d = s;
+					}
 					Ok(len)
 				},
 				None => Err(Error::BufferTooSmall {

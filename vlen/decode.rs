@@ -218,7 +218,12 @@ macro_rules! decode_short_fn {
 			}
 			if buf.len() >= needed {
 				let mut tmp = [0u8; $size];
-				tmp[..buf.len()].copy_from_slice(buf);
+				// Byte loop rather than copy_from_slice: a variable-
+				// length copy links compiler_builtins memcpy, which
+				// dwarfs this crate in minimal embedded builds.
+				for (dst, &src) in tmp.iter_mut().zip(buf) {
+					*dst = src;
+				}
 				Ok($decode_fn(&tmp))
 			} else {
 				Err(Error::BufferTooSmall {
