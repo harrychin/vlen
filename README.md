@@ -93,6 +93,28 @@ criterion run — measure on your own hardware):
 | all 5-byte   | ~1.1x slower                  | **1.5x faster**               |
 | mixed sizes  | ~1.2x slower                  | ~1.2x slower                  |
 
+### Comparison with other encodings
+
+`benches/comparison.rs` measures vlen against LEB128
+(`integer-encoding`), the protobuf varint from `prost`, the `vint64`
+prefix varint, `stream-vbyte` group varint (scalar kernels), and raw
+fixed-width `u32` words. All codecs run through their in-memory slice
+APIs. From the same machine and run:
+
+| Benchmark (1,024 u32) | vlen | leb128 | prost | vint64 | stream-vbyte |
+|-----------------------|-----:|-------:|------:|-------:|-------------:|
+| bulk encode, mixed    | 1.08 µs | 1.67 µs | 1.93 µs | 3.05 µs | **0.86 µs** |
+| bulk decode, mixed    | **1.45 µs** | 2.70 µs | 2.19 µs | 2.67 µs | 1.75 µs |
+| bulk encode, small    | **0.15 µs** | 0.88 µs | 1.03 µs | 2.10 µs | 0.63 µs |
+| bulk decode, small    | **0.12 µs** | 2.24 µs | 2.06 µs | 2.44 µs | 1.26 µs |
+| single encode (4-byte value) | 1.49 ns | 1.99 ns | 2.86 ns | **1.10 ns** | – |
+| single decode (4-byte value) | **0.78 ns** | 2.40 ns | 0.84 ns | 2.27 ns | – |
+
+Caveats: `stream-vbyte` is a different format (external count, separate
+control stream) with an SSE4.1 decoder that outperforms these scalar
+numbers on x86_64, and `prost`/`vint64` are 64-bit codecs fed the same
+values widened to `u64`.
+
 ### Serde integration
 
 With the `serde` feature, the `Vlen*` wrapper types serialize through

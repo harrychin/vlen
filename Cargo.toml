@@ -19,7 +19,7 @@ name = "encode_decode"
 harness = false
 
 [[bench]]
-name = "leb128_comparison"
+name = "comparison"
 harness = false
 
 [[bench]]
@@ -33,6 +33,9 @@ base64 = { version = "0.23", optional = true, default-features = false }
 [dev-dependencies]
 criterion = "0.8"
 integer-encoding = "4.1"
+prost = "0.14"
+vint64 = "1.0"
+stream-vbyte = "0.4"
 arbtest = "0.3"
 rstest = "0.26"
 serde = { version = "1.0", features = ["derive"] }
