@@ -30,21 +30,21 @@ included:
 
 | Benchmark (1,024 u32) | vlen | LEB128 | prost | vint64 | stream-vbyte |
 |-----------------------|-----:|-------:|------:|-------:|-------------:|
-| bulk encode, small values | **0.13 µs** | 0.79 µs | 0.96 µs | 1.89 µs | 0.53 µs |
-| bulk encode, mixed sizes  | 0.92 µs | 1.34 µs | 1.63 µs | 2.44 µs | **0.73 µs** |
-| single decode (4-byte value) | **0.67 ns** | 2.01 ns | 0.77 ns | 2.04 ns | – |
-| single encode (4-byte value) | 1.56 ns | 2.00 ns | 2.61 ns | **0.80 ns** | – |
+| bulk encode, small values | **0.17 µs** | 1.04 µs | 0.97 µs | 1.99 µs | 0.56 µs |
+| bulk encode, mixed sizes  | 1.03 µs | 1.79 µs | 1.76 µs | 2.52 µs | **0.80 µs** |
+| single decode (4-byte value) | **0.82 ns** | 2.32 ns | 0.94 ns | 2.21 ns | – |
+| single encode (4-byte value) | 1.65 ns | 2.97 ns | 2.83 ns | **0.91 ns** | – |
 
 Methodology: every codec through its fastest public in-memory API over
-identical data (`benches/comparison.rs`). The bulk rows and the chart
-all use vlen's validating API. The single-value rows use its
-infallible array API; through the validating slice API — the same
-work the other crates always do — vlen measures 1.21 ns decode /
-1.62 ns encode, so prost's validating decode (0.77 ns) wins that one
-cell. stream-vbyte runs its scalar kernels (its SSE4.1 decoder is
-faster on x86_64) and is a control-stream format rather than a
-self-delimiting varint; `prost` and `vint64` are 64-bit codecs fed
-the same values widened to `u64`.
+identical data, from one run of `benches/comparison.rs`. The bulk rows
+and the chart all use vlen's validating API. The single-value rows use
+its infallible array API; through the validating slice API — the same
+work the other crates always do — vlen measures 0.90 ns decode /
+1.74 ns encode, level with prost's validating decode (0.94 ns).
+stream-vbyte runs its scalar kernels (its SSE4.1 decoder is faster on
+x86_64) and is a control-stream format rather than a self-delimiting
+varint; `prost` and `vint64` are 64-bit codecs fed the same values
+widened to `u64`.
 
 Compression matches LEB128 byte-for-byte below 2^28 — where most
 varint data lives — and caps at 9 bytes for `u64`, where LEB128 needs
