@@ -55,3 +55,7 @@ integer-encoding = "4.1"
 prost = "0.14"
 vint64 = "1.0"
 stream-vbyte = "0.4"
+
+[[example]]
+name = "wal"
+required-features = ["alloc"]
