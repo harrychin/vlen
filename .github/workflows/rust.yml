@@ -2,21 +2,76 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.features }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu is x86_64, macos is aarch64.
+        os: [ubuntu-latest, macos-latest]
+        features:
+          - "--no-default-features"
+          - "--features alloc"
+          - "--features serde"
+          - "--all-features"
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test ${{ matrix.features }} --verbose
+
+  lint:
+    name: Clippy and rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+      - name: Format
+        run: cargo fmt --check
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - name: Check
+        run: cargo check --all-features
+
+  no-std:
+    name: no_std (thumbv7em-none-eabi)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+      - name: Build core
+        run: cargo build --target thumbv7em-none-eabi --no-default-features
+      - name: Build with all features
+        run: cargo build --target thumbv7em-none-eabi --features full
+
+  docs:
+    name: Docs (docs.rs configuration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Build docs
+        run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
