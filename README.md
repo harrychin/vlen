@@ -149,6 +149,9 @@ streams you can read value by value.
 
 ## Learn more
 
+- [examples/wal.rs](examples/wal.rs) — a runnable write-ahead log:
+  framing, delta encoding, torn-tail crash recovery, and the bulk
+  paths in ~150 lines (`cargo run --release --example wal --features alloc`)
 - [API documentation](https://docs.rs/vlen)
 - [DESIGN.md](DESIGN.md) — wire format specification and performance
   design notes
