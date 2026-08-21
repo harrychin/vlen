@@ -61,6 +61,12 @@ pub mod bulk;
 pub mod decode;
 pub mod encode;
 mod error;
+#[cfg(all(
+	feature = "simd",
+	any(target_arch = "aarch64", target_arch = "x86_64")
+))]
+#[allow(unsafe_code)]
+mod kernels;
 #[cfg(feature = "serde")]
 pub mod serde;
 

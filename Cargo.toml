@@ -46,7 +46,8 @@ postcard = { version = "1.1", features = ["use-std"] }
 default = []
 alloc = []
 serde = ["dep:serde", "dep:base64"]
-full = ["alloc", "serde"]
+simd = []
+full = ["alloc", "serde", "simd"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -4,6 +4,15 @@
 
 ### Added
 
+- Sixteen-byte run windows for two- and four-byte decode: eight
+  two-byte or four four-byte encodings per step in portable safe
+  Rust, roughly 20% faster than the previous eight-byte windows.
+- An opt-in `simd` feature (also part of `full`) with audited NEON
+  (aarch64) and SSE2 (x86_64) kernels for those lane reassemblies,
+  worth about another 15%. Both instruction sets are baseline for
+  their targets, so there is no runtime detection; default builds
+  still contain no unsafe code.
+
 - Run-accelerated decoding iterators: `decode_iter_u32`, `decode_iter_u64`,
   `decode_iter_i32`, and `decode_iter_i64` refill an internal window
   through the same run fast paths as the specialized bulk functions,

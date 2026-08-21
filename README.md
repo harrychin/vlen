@@ -2,7 +2,7 @@
 
 **The fastest-decoding self-delimiting varint for Rust.** Integers and
 floats up to 128 bits, smaller values in fewer bytes, zero
-dependencies, zero unsafe code, `no_std`.
+dependencies, no unsafe code by default, `no_std`.
 
 ```rust
 use vlen::{Decode, Encode};
@@ -50,11 +50,13 @@ Compression matches LEB128 byte-for-byte below 2^28 — where most
 varint data lives — and caps at 9 bytes for `u64`, where LEB128 needs
 up to 10.
 
-**It is safe to point at untrusted bytes.** The crate contains no
-unsafe code (`#![deny(unsafe_code)]`). The checked API returns typed
-errors — never panics, never desynchronizes on truncated input,
-invalid prefixes, or out-of-range values — and decoding needs only the
-bytes a value actually occupies.
+**It is safe to point at untrusted bytes.** Default builds contain no
+unsafe code (`#![deny(unsafe_code)]`); the opt-in `simd` feature adds
+two small, audited NEON/SSE2 kernels whose soundness holds by
+construction (baseline target features, array-derived pointers). The
+checked API returns typed errors — never panics, never desynchronizes
+on truncated input, invalid prefixes, or out-of-range values — and
+decoding needs only the bytes a value actually occupies.
 
 **It runs everywhere, at compile time too.** The core is dependency-
 free `no_std` (CI builds it for `thumbv7em-none-eabi`), and every
@@ -106,6 +108,7 @@ allocation-free either way, hostile input rejected with errors.
 |---------|------|
 | `alloc` | `Vec` conveniences: `encode_to_vec`, `bulk_encode_to_vec`, `bulk_decode_values` |
 | `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
+| `simd`  | Native NEON/SSE2 kernels for the bulk run fast paths (~15% faster two- and four-byte runs; adds two audited unsafe blocks) |
 | `full`  | Everything above |
 
 MSRV: **1.85**. Tested in CI on x86_64 and aarch64, stable and MSRV,

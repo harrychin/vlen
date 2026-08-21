@@ -102,7 +102,7 @@ per-value length arithmetic entirely:
 - The window checks are gated so that streams with no runs pay only a
   compare or two per eight values.
 
-### Why there are no shuffle-based SIMD kernels
+### SIMD: where it helps and where it cannot
 
 With an inline self-delimiting varint, discovering where each value
 starts requires reading the previous value's first byte, so wide
@@ -113,6 +113,17 @@ fastest scalar and streaming decode; the run paths recover batch speed
 exactly where boundaries are uniform and therefore known in advance.
 If your workload is columnar bulk `u32` compression above all else, a
 control-stream format like stream-vbyte is the better tool.
+
+Inside a detected run, however, boundaries are known and real
+data-parallelism exists. The opt-in `simd` feature replaces the SWAR
+lane reassembly for two- and four-byte decode runs with NEON
+(aarch64) and SSE2 (x86_64) kernels, worth about another 15% there.
+Both instruction sets are baseline features of their targets, so no
+runtime detection is involved; the unsafe surface is two short
+functions per architecture whose load/store pointers come from array
+references, and the full test suite runs with the feature on and off,
+on both architectures, in CI. Default builds remain free of unsafe
+code.
 
 ### Specialized vs generic bulk functions
 

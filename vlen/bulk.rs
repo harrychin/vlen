@@ -57,6 +57,67 @@ const TWO_BYTE_WANT: u64 = 0x0080_0080_0080_0080;
 const FOUR_BYTE_MASK: u64 = 0x0000_00F0_0000_00F0;
 const FOUR_BYTE_WANT: u64 = 0x0000_00E0_0000_00E0;
 
+/// Reassembles eight two-byte encodings (sixteen interleaved bytes)
+/// into eight 16-bit value lanes. The caller has already verified the
+/// prefix bits of all eight first bytes.
+#[inline(always)]
+fn two_byte_lanes(bytes: &[u8; 16], lanes: &mut [u16; 8]) {
+	#[cfg(all(
+		feature = "simd",
+		any(target_arch = "aarch64", target_arch = "x86_64")
+	))]
+	{
+		crate::kernels::two_byte_lanes(bytes, lanes);
+	}
+	#[cfg(not(all(
+		feature = "simd",
+		any(target_arch = "aarch64", target_arch = "x86_64")
+	)))]
+	{
+		let mut half = 0;
+		while half < 2 {
+			let word = u64::from_le_bytes(
+				bytes[half * 8..half * 8 + 8].try_into().unwrap(),
+			);
+			let lo = word & 0x003F_003F_003F_003F;
+			let hi = (word >> 8) & 0x00FF_00FF_00FF_00FF;
+			let packed = (hi << 6) | lo;
+			lanes[half * 4] = (packed & 0xFFFF) as u16;
+			lanes[half * 4 + 1] = ((packed >> 16) & 0xFFFF) as u16;
+			lanes[half * 4 + 2] = ((packed >> 32) & 0xFFFF) as u16;
+			lanes[half * 4 + 3] = (packed >> 48) as u16;
+			half += 1;
+		}
+	}
+}
+
+/// Reassembles four four-byte encodings (sixteen bytes) into four
+/// 32-bit value lanes. The caller has already verified the prefix
+/// nibbles of all four first bytes.
+#[inline(always)]
+fn four_byte_lanes(bytes: &[u8; 16], lanes: &mut [u32; 4]) {
+	#[cfg(all(
+		feature = "simd",
+		any(target_arch = "aarch64", target_arch = "x86_64")
+	))]
+	{
+		crate::kernels::four_byte_lanes(bytes, lanes);
+	}
+	#[cfg(not(all(
+		feature = "simd",
+		any(target_arch = "aarch64", target_arch = "x86_64")
+	)))]
+	{
+		let mut i = 0;
+		while i < 4 {
+			let lane =
+				u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
+			lanes[i] = ((lane >> 8) << 4) | (lane & 0x0F);
+			i += 1;
+		}
+	}
+}
+
 /// Generates the window fast paths for one unsigned width.
 ///
 /// Both directions detect runs of equal-length encodings, whose
@@ -197,6 +258,23 @@ macro_rules! window_run_fns {
 				}
 			} else if b0 < 0xC0 {
 				if word & TWO_BYTE_MASK == TWO_BYTE_WANT {
+					// Try a sixteen-byte window first: eight two-byte
+					// encodings in one step.
+					if let Some(wide) = buf.get(offset..offset + 16) {
+						let word2 =
+							u64::from_le_bytes(wide[8..16].try_into().unwrap());
+						if word2 & TWO_BYTE_MASK == TWO_BYTE_WANT {
+							let mut lanes = [0u16; 8];
+							two_byte_lanes(
+								wide.try_into().unwrap(),
+								&mut lanes,
+							);
+							for (slot, &lane) in slots.iter_mut().zip(&lanes) {
+								*slot = lane as $ut;
+							}
+							return Some((8, offset + 16));
+						}
+					}
 					// Four two-byte encodings: reassemble all four
 					// values inside 16-bit lanes at once.
 					let lo = word & 0x003F_003F_003F_003F;
@@ -210,6 +288,23 @@ macro_rules! window_run_fns {
 				}
 			} else if (0xE0..0xF0).contains(&b0) {
 				if word & FOUR_BYTE_MASK == FOUR_BYTE_WANT {
+					// Try a sixteen-byte window first: four four-byte
+					// encodings in one step.
+					if let Some(wide) = buf.get(offset..offset + 16) {
+						let word2 =
+							u64::from_le_bytes(wide[8..16].try_into().unwrap());
+						if word2 & FOUR_BYTE_MASK == FOUR_BYTE_WANT {
+							let mut lanes = [0u32; 4];
+							four_byte_lanes(
+								wide.try_into().unwrap(),
+								&mut lanes,
+							);
+							for (slot, &lane) in slots.iter_mut().zip(&lanes) {
+								*slot = lane as $ut;
+							}
+							return Some((4, offset + 16));
+						}
+					}
 					// Two four-byte encodings in two 32-bit lanes:
 					// value bits sit above the prefix nibble.
 					let lane0 = word & 0xFFFF_FFFF;
