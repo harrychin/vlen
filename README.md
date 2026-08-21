@@ -77,8 +77,10 @@ similarly-sized values and move them without per-value length
 arithmetic — up to 4x faster than the per-value loop on small-value
 streams, and the signed variants are built for delta-encoded data
 (smooth delta streams decode ~1.8x faster than the generic loop) — in
-portable safe Rust on every architecture. A `decode_iter` streaming
-iterator handles streams of unknown length:
+portable safe Rust on every architecture. Streaming callers get the
+same treatment: the run-accelerated iterators (`decode_iter_u32` and
+friends) iterate small-value streams ~4.6x faster than the generic
+`decode_iter`, which handles any type:
 
 ```rust
 use vlen::{bulk_encode, decode_iter};

@@ -442,3 +442,92 @@ fn specialized_signed_bulk_matches_generic_bulk() {
 	assert_eq!(read, generic_len);
 	assert_eq!(decoded, i64_values);
 }
+
+#[test]
+fn specialized_decode_iter_matches_generic_iter() {
+	// Runs of every size class plus hostile interleaving; the
+	// specialized iterator must yield exactly what the generic one
+	// yields.
+	let mut values = Vec::new();
+	for i in 0..64u32 {
+		values.push(i % 0x50);
+	}
+	for i in 0..64u32 {
+		values.push(0x80 + (i * 37) % 0x3F80);
+	}
+	values.extend([1, 0x12345678, 0x4000, 7]);
+	for i in 0..64u32 {
+		values.push(0x1000_0000 + (i * 9973) % 0xF000_0000);
+	}
+
+	let mut buf = vec![0u8; values.len() * 5];
+	let len = bulk_encode(&mut buf, &values).unwrap();
+	let encoded = &buf[..len];
+
+	let generic: Vec<u32> =
+		decode_iter(encoded).collect::<Result<_, _>>().unwrap();
+	let specialized: Vec<u32> = vlen::decode_iter_u32(encoded)
+		.collect::<Result<_, _>>()
+		.unwrap();
+	assert_eq!(generic, values);
+	assert_eq!(specialized, values);
+
+	let wide: Vec<u64> = values.iter().map(|&v| v as u64).collect();
+	let specialized64: Vec<u64> = vlen::decode_iter_u64(encoded)
+		.collect::<Result<_, _>>()
+		.unwrap();
+	assert_eq!(specialized64, wide);
+}
+
+#[test]
+fn specialized_decode_iter_reports_errors_and_stops() {
+	// Same error semantics as the generic iterator: one Err, then
+	// fused None — including when the error follows buffered values.
+	let buf = [5u8, 6, 7, 8, 9, 10, 11, 12, 0xF9, 0, 0, 0, 0];
+	let mut iter = vlen::decode_iter_u32(&buf);
+	for expect in 5u32..=12 {
+		assert_eq!(iter.next(), Some(Ok(expect)));
+	}
+	assert_eq!(
+		iter.next(),
+		Some(Err(Error::InvalidPrefix { prefix: 0xF9 }))
+	);
+	assert_eq!(iter.next(), None);
+	assert_eq!(iter.next(), None);
+}
+
+#[test]
+fn signed_run_iter_matches_generic_iter() {
+	let mut values = Vec::new();
+	for i in 0..64i64 {
+		values.push((i % 63) - 31);
+	}
+	values.extend([i64::MIN, i64::MAX, 0, -1]);
+	for i in 0..64i64 {
+		values.push(((i * 41) % 0x1F00) - 0xF80);
+	}
+
+	let mut buf = vec![0u8; values.len() * 9];
+	let len = bulk_encode(&mut buf, &values).unwrap();
+	let encoded = &buf[..len];
+
+	let generic: Vec<i64> =
+		decode_iter(encoded).collect::<Result<_, _>>().unwrap();
+	let specialized: Vec<i64> = vlen::decode_iter_i64(encoded)
+		.collect::<Result<_, _>>()
+		.unwrap();
+	assert_eq!(generic, values);
+	assert_eq!(specialized, values);
+
+	let narrow: Vec<i32> = values
+		.iter()
+		.filter(|v| i32::try_from(**v).is_ok())
+		.map(|&v| v as i32)
+		.collect();
+	let mut buf32 = vec![0u8; narrow.len() * 5];
+	let len32 = bulk_encode(&mut buf32, &narrow).unwrap();
+	let specialized32: Vec<i32> = vlen::decode_iter_i32(&buf32[..len32])
+		.collect::<Result<_, _>>()
+		.unwrap();
+	assert_eq!(specialized32, narrow);
+}

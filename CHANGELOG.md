@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1
+
+### Added
+
+- Run-accelerated decoding iterators: `decode_iter_u32`, `decode_iter_u64`,
+  `decode_iter_i32`, and `decode_iter_i64` refill an internal window
+  through the same run fast paths as the specialized bulk functions,
+  then serve values with an index bump. Streams of one-byte values
+  iterate ~4.6x faster than the generic `decode_iter`, two-byte
+  streams ~3.9x, and even unpredictable mixed streams gain ~1.2x -
+  the buffered path never loses. Purely additive; the generic
+  `decode_iter` is unchanged.
+
 ## 0.4.0
 
 Complete overhaul of correctness, safety, and performance. This is a

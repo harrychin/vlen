@@ -170,5 +170,43 @@ fn bench_bulk(c: &mut Criterion) {
 	}
 }
 
-criterion_group!(benches, bench_bulk, bench_bulk_u64, bench_bulk_i64_deltas);
+criterion_group!(
+	benches,
+	bench_bulk,
+	bench_bulk_u64,
+	bench_bulk_i64_deltas,
+	bench_iter
+);
 criterion_main!(benches);
+
+fn bench_iter(c: &mut Criterion) {
+	for kind in ["small", "two_byte", "random"] {
+		let values = values(kind);
+		let mut buf = vec![0u8; N * 5];
+		let len = bulk_encode(&mut buf, &values).unwrap();
+		let encoded = &buf[..len];
+		let mut out = vec![0u32; N];
+
+		c.bench_function(&format!("iter_generic/{kind}"), |b| {
+			b.iter(|| {
+				vlen::decode_iter::<u32>(black_box(encoded))
+					.map(Result::unwrap)
+					.fold(0u64, |acc, v| acc.wrapping_add(v as u64))
+			})
+		});
+		c.bench_function(&format!("iter_run/{kind}"), |b| {
+			b.iter(|| {
+				vlen::decode_iter_u32(black_box(encoded))
+					.map(Result::unwrap)
+					.fold(0u64, |acc, v| acc.wrapping_add(v as u64))
+			})
+		});
+		c.bench_function(&format!("iter_bulk_slice/{kind}"), |b| {
+			b.iter(|| {
+				bulk_decode_u32(black_box(encoded), black_box(&mut out))
+					.unwrap();
+				out.iter().fold(0u64, |acc, &v| acc.wrapping_add(v as u64))
+			})
+		});
+	}
+}

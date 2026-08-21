@@ -551,3 +551,235 @@ impl<'a, T: Decode> Iterator for DecodeIter<'a, T> {
 }
 
 impl<'a, T: Decode> core::iter::FusedIterator for DecodeIter<'a, T> {}
+
+/// Generates a run-accelerated decoding iterator for one unsigned
+/// width: an internal window of up to eight values is refilled through
+/// the bulk run fast paths, and `next()` serves from it with an index
+/// bump. Falls back to the checked scalar decoder between runs.
+macro_rules! run_iter {
+	(
+		$(#[$fn_docs:meta])* $fn_name:ident,
+		$(#[$ty_docs:meta])* $ty_name:ident,
+		$ut:ident, $try_dec:ident
+	) => {
+		$(#[$fn_docs])*
+		#[must_use]
+		pub fn $fn_name(buf: &[u8]) -> $ty_name<'_> {
+			$ty_name {
+				buf,
+				offset: 0,
+				pending: [0; 8],
+				head: 0,
+				len: 0,
+				failed: false,
+			}
+		}
+
+		$(#[$ty_docs])*
+		#[derive(Debug, Clone)]
+		pub struct $ty_name<'a> {
+			buf: &'a [u8],
+			offset: usize,
+			pending: [$ut; 8],
+			head: u8,
+			len: u8,
+			failed: bool,
+		}
+
+		impl<'a> Iterator for $ty_name<'a> {
+			type Item = Result<$ut>;
+
+			#[inline]
+			fn next(&mut self) -> Option<Self::Item> {
+				if self.head < self.len {
+					let value = self.pending[self.head as usize];
+					self.head += 1;
+					return Some(Ok(value));
+				}
+				if self.failed || self.offset >= self.buf.len() {
+					return None;
+				}
+				if let Some((n, new_offset)) =
+					$try_dec(self.buf, self.offset, &mut self.pending)
+				{
+					self.offset = new_offset;
+					self.head = 1;
+					self.len = n as u8;
+					return Some(Ok(self.pending[0]));
+				}
+				match <$ut>::decode(&self.buf[self.offset..]) {
+					Ok((value, len)) => {
+						self.offset += len;
+						Some(Ok(value))
+					},
+					Err(err) => {
+						self.failed = true;
+						Some(Err(err))
+					},
+				}
+			}
+
+			fn size_hint(&self) -> (usize, Option<usize>) {
+				let buffered = (self.len - self.head) as usize;
+				if self.failed {
+					return (buffered, Some(buffered));
+				}
+				let remaining = self.buf.len() - self.offset;
+				(
+					buffered
+						+ remaining
+							.div_ceil(<$ut as Decode>::MAX_ENCODED_SIZE),
+					Some(buffered + remaining),
+				)
+			}
+		}
+
+		impl<'a> core::iter::FusedIterator for $ty_name<'a> {}
+	};
+}
+
+run_iter! {
+	/// Returns a run-accelerated iterator decoding consecutive `u32`
+	/// values from `buf`.
+	///
+	/// Behaves like [`decode_iter`], but refills an internal window
+	/// through the same run fast paths as [`bulk_decode_u32`], so runs
+	/// of similarly-sized values decode several at a time. Unlike
+	/// [`DecodeIter`] it buffers ahead, so it exposes no byte offset.
+	decode_iter_u32,
+	/// Run-accelerated iterator over `u32` values. See
+	/// [`decode_iter_u32`].
+	DecodeIterU32,
+	u32, try_decode_run_u32
+}
+
+run_iter! {
+	/// Returns a run-accelerated iterator decoding consecutive `u64`
+	/// values from `buf`.
+	///
+	/// Behaves like [`decode_iter`], but refills an internal window
+	/// through the same run fast paths as [`bulk_decode_u64`], so runs
+	/// of similarly-sized values decode several at a time. Unlike
+	/// [`DecodeIter`] it buffers ahead, so it exposes no byte offset.
+	decode_iter_u64,
+	/// Run-accelerated iterator over `u64` values. See
+	/// [`decode_iter_u64`].
+	DecodeIterU64,
+	u64, try_decode_run_u64
+}
+
+/// Generates the signed run-accelerated iterator: refills through the
+/// unsigned run machinery and zigzag-maps into the pending window.
+macro_rules! run_iter_signed {
+	(
+		$(#[$fn_docs:meta])* $fn_name:ident,
+		$(#[$ty_docs:meta])* $ty_name:ident,
+		$it:ident, $ut:ident, $try_dec:ident
+	) => {
+		$(#[$fn_docs])*
+		#[must_use]
+		pub fn $fn_name(buf: &[u8]) -> $ty_name<'_> {
+			$ty_name {
+				buf,
+				offset: 0,
+				pending: [0; 8],
+				head: 0,
+				len: 0,
+				failed: false,
+			}
+		}
+
+		$(#[$ty_docs])*
+		#[derive(Debug, Clone)]
+		pub struct $ty_name<'a> {
+			buf: &'a [u8],
+			offset: usize,
+			pending: [$it; 8],
+			head: u8,
+			len: u8,
+			failed: bool,
+		}
+
+		impl<'a> Iterator for $ty_name<'a> {
+			type Item = Result<$it>;
+
+			#[inline]
+			fn next(&mut self) -> Option<Self::Item> {
+				if self.head < self.len {
+					let value = self.pending[self.head as usize];
+					self.head += 1;
+					return Some(Ok(value));
+				}
+				if self.failed || self.offset >= self.buf.len() {
+					return None;
+				}
+				let mut raw: [$ut; 8] = [0; 8];
+				if let Some((n, new_offset)) =
+					$try_dec(self.buf, self.offset, &mut raw)
+				{
+					for (slot, &z) in
+						self.pending[..n].iter_mut().zip(&raw[..n])
+					{
+						*slot = ((z >> 1) as $it) ^ (-((z & 1) as $it));
+					}
+					self.offset = new_offset;
+					self.head = 1;
+					self.len = n as u8;
+					return Some(Ok(self.pending[0]));
+				}
+				match <$it>::decode(&self.buf[self.offset..]) {
+					Ok((value, len)) => {
+						self.offset += len;
+						Some(Ok(value))
+					},
+					Err(err) => {
+						self.failed = true;
+						Some(Err(err))
+					},
+				}
+			}
+
+			fn size_hint(&self) -> (usize, Option<usize>) {
+				let buffered = (self.len - self.head) as usize;
+				if self.failed {
+					return (buffered, Some(buffered));
+				}
+				let remaining = self.buf.len() - self.offset;
+				(
+					buffered
+						+ remaining
+							.div_ceil(<$it as Decode>::MAX_ENCODED_SIZE),
+					Some(buffered + remaining),
+				)
+			}
+		}
+
+		impl<'a> core::iter::FusedIterator for $ty_name<'a> {}
+	};
+}
+
+run_iter_signed! {
+	/// Returns a run-accelerated iterator decoding consecutive `i32`
+	/// values from `buf`.
+	///
+	/// Behaves like [`decode_iter`], with the same run fast paths as
+	/// [`bulk_decode_i32`]; delta-encoded streams are the sweet spot.
+	decode_iter_i32,
+	/// Run-accelerated iterator over `i32` values. See
+	/// [`decode_iter_i32`].
+	DecodeIterI32,
+	i32, u32, try_decode_run_u32
+}
+
+run_iter_signed! {
+	/// Returns a run-accelerated iterator decoding consecutive `i64`
+	/// values from `buf`.
+	///
+	/// Behaves like [`decode_iter`], with the same run fast paths as
+	/// [`bulk_decode_i64`]; delta-encoded streams are the sweet spot.
+	decode_iter_i64,
+	/// Run-accelerated iterator over `i64` values. See
+	/// [`decode_iter_i64`].
+	DecodeIterI64,
+	i64, u64, try_decode_run_u64
+}
