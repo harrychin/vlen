@@ -1,20 +1,124 @@
 # vlen: High-performance variable-length numeric encoding
 
-`vlen` is an enhanced version of the original `vu128` variable-length numeric encoding, featuring SIMD optimizations, improved performance, and enhanced functionality. Numeric types up to 128 bits are supported (integers and floating-point), with smaller values being encoded using fewer bytes.
+`vlen` is an enhanced version of the original `vu128` variable-length
+numeric encoding. Numeric types up to 128 bits are supported (integers
+and floating-point), with smaller values being encoded using fewer
+bytes. Every integer width shares one wire format, so a value encoded
+as one type decodes as any wider type.
 
-The compression ratio of `vlen` equals or exceeds the widely used [VLQ] and [LEB128] encodings, and is significantly faster on modern pipelined architectures thanks to SIMD optimizations and algorithmic improvements. The library is designed to work efficiently on both high-performance systems and embedded targets.
+The compression ratio of `vlen` equals or exceeds the widely used
+[VLQ] and [LEB128] encodings, and it decodes faster on modern pipelined
+architectures because the encoded length is announced by the first byte
+instead of continuation bits spread across the value.
 
 [VLQ]: https://en.wikipedia.org/wiki/Variable-length_quantity
 [LEB128]: https://en.wikipedia.org/wiki/LEB128
 
-## Key Improvements
+## Highlights
 
-- **SIMD Optimizations**: Leverages modern CPU vector instructions for faster encoding/decoding
-- **Enhanced Performance**: Significantly improved throughput compared to the original implementation
-- **Better Memory Layout**: Optimized buffer handling and alignment for maximum performance
-- **Comprehensive Test Coverage**: Extensive property-based testing and benchmarks
-- **Modern Rust Features**: Updated to use latest Rust idioms and optimizations
-- **Embedded Support**: Works efficiently on embedded targets with minimal memory footprint
+- **Safe**: no `unsafe` anywhere (`#![deny(unsafe_code)]`), and the
+  checked API validates untrusted input with typed errors instead of
+  panicking or desynchronizing.
+- **Fast**: branch-light single-value codec, plus bulk operations with
+  a SWAR fast path for runs of small values.
+- **`const fn` everywhere**: every array-based encode/decode function
+  works in const contexts.
+- **`no_std`**: the core has zero dependencies and builds for embedded
+  targets; `serde` support stays `no_std` and allocation-free.
+
+## Usage
+
+### Encoding and decoding
+
+The `Encode` and `Decode` traits work on ordinary slices and validate
+everything: buffers only need to fit the value's actual encoded size,
+truncated input and invalid prefixes are rejected with typed errors,
+and decoding a value that overflows the target type fails cleanly.
+
+```rust
+use vlen::{Decode, Encode};
+
+let mut buf = [0u8; 5];
+let value = 12345u32;
+
+let len = value.encode(&mut buf)?;
+assert_eq!(len, value.encoded_size());
+
+let (decoded, decoded_len) = u32::decode(&buf[..len])?;
+assert_eq!(decoded, value);
+assert_eq!(decoded_len, len);
+# Ok::<(), vlen::Error>(())
+```
+
+The array-based functions are the infallible fast core; their array
+parameter types guarantee room for any value of the type, and they are
+all usable in const contexts:
+
+```rust
+const LEN: usize = {
+	let mut buf = [0u8; 5];
+	vlen::encode_u32(&mut buf, 12345)
+};
+assert_eq!(LEN, 2);
+```
+
+### Bulk operations and streams
+
+```rust
+use vlen::{bulk_encode, decode_iter};
+
+let values = [1u64, 250, 70_000, u64::MAX];
+let mut buf = [0u8; 36];
+let len = bulk_encode(&mut buf, &values)?;
+
+let decoded: Result<Vec<u64>, vlen::Error> =
+	decode_iter(&buf[..len]).collect();
+assert_eq!(decoded?, values);
+# Ok::<(), vlen::Error>(())
+```
+
+All bulk functions produce and consume the canonical byte stream —
+output is byte-for-byte identical to encoding each value individually,
+and the bulk and per-value APIs interoperate freely. The
+`u32`-specialized `bulk_encode_u32`/`bulk_decode_u32` add a portable
+SWAR fast path that processes runs of one-byte encodings eight at a
+time; prefer them when your data is predominantly small values.
+
+Indicative numbers for 1,024 values (Apple M-series, `--quick`
+criterion run — measure on your own hardware):
+
+| Distribution | specialized vs generic encode | specialized vs generic decode |
+|--------------|------------------------------:|------------------------------:|
+| all < 128    | **4.4x faster**               | **5.3x faster**               |
+| all 5-byte   | ~1.1x slower                  | **1.5x faster**               |
+| mixed sizes  | ~1.2x slower                  | ~1.2x slower                  |
+
+### Serde integration
+
+With the `serde` feature, the `Vlen*` wrapper types serialize through
+the vlen codec. Binary formats (postcard, bincode, ...) receive the raw
+encoded bytes; human-readable formats (JSON, ...) receive base64.
+Neither path allocates, and malformed input is rejected with errors.
+
+```rust
+use serde::{Deserialize, Serialize};
+use vlen::serde::{VlenI64, VlenU32};
+
+#[derive(Serialize, Deserialize)]
+struct MyStruct {
+	id: VlenU32,
+	timestamp: VlenI64,
+}
+```
+
+## Features
+
+- **`alloc`**: `Vec`-based convenience functions (`encode_to_vec`,
+  `bulk_encode_to_vec`, `bulk_decode_values`)
+- **`serde`**: serde wrapper types (allocation-free, `no_std`)
+- **`full`**: everything above
+
+The minimum supported Rust version is **1.85**.
 
 ## Encoding details
 
@@ -55,156 +159,8 @@ MSB ------------------------------------ LSB
               [0xF3, 0x78, 0x56, 0x34, 0x12]  Encoded output (order is little-endian)
 ```
 
-## Performance Features
-
-- **SIMD-optimized encoding/decoding** for improved throughput
-- **Aligned memory access** for better cache performance
-- **Zero-copy operations** where possible
-- **Minimal allocation overhead** with optional `alloc` feature
-
-## Benchmarks
-
-`vlen` significantly outperforms the standard `leb128` (varint) encoding, especially when SIMD optimizations are enabled.
-
-The following benchmarks were run on a modern x86_64 system (Intel Core i7-1260P).
-
-### Single Value Performance
-
-Encoding/decoding a single `u32` value (`12,345,678`).
-
-| Operation | `vlen` | `leb128` | Speedup |
-|-----------|--------|----------|---------|
-| Encode    | 1.27 ns | 10.53 ns | **8.3x** |
-| Decode    | 0.46 ns | 27.68 ns | **60x** |
-
-### Bulk Performance (SIMD)
-
-Encoding/decoding 1,024 mixed `u32` values. This demonstrates the power of `vlen`'s SIMD optimizations.
-
-| Operation | `vlen` (SIMD) | `leb128` | Speedup |
-|-----------|---------------|----------|---------|
-| Encode    | 1.60 µs       | 10.11 µs | **6.3x** |
-| Decode    | 1.61 µs       | 22.50 µs | **14x** |
-
-*Note: `vlen` achieves >600 million integers per second for both encoding and decoding on this hardware.*
-
-## Features
-
-- **`alloc`**: Enables allocation-dependent functionality (default: disabled)
-- **`serde`**: Enables serde integration for serialization/deserialization (default: disabled)
-- **`simd`**: Enables SIMD optimizations for bulk encoding/decoding (default: disabled)
-- **`full`**: Enables all features (`alloc`, `serde`, `simd`)
-
-## Platform Support
-
-- **High-performance systems**: Full SIMD optimizations for x86_64 and aarch64
-- **Embedded targets**: Efficient scalar implementations with minimal memory usage
-- **Cross-platform**: Works on any platform supported by Rust
-- **No-std support**: Can be used in `no_std` environments with the `alloc` feature
-
-## Usage
-
-### Basic Encoding/Decoding
-
-```rust
-use vlen::{encode, decode, encoded_size};
-
-// Encode a value
-let mut buf = [0u8; 17];
-let value: u64 = 12345;
-let encoded_len = encode(&mut buf, value)?;
-
-// Decode a value
-let (decoded_value, decoded_len) = decode::<u64>(&buf)?;
-
-// Calculate encoded size without encoding
-let size = encoded_size(value)?;
-```
-
-### Serde Integration
-
-With the `serde` feature enabled, you can use vlen encoding with serde-based serialization formats:
-
-```rust
-use serde::{Serialize, Deserialize};
-use vlen::serde::{VlenU32, VlenI64, VlenF64};
-
-#[derive(Serialize, Deserialize)]
-struct MyStruct {
-    id: VlenU32,
-    timestamp: VlenI64,
-    score: VlenF64,
-}
-
-let data = MyStruct {
-    id: VlenU32(12345),
-    timestamp: VlenI64(-1234567890),
-    score: VlenF64(3.14159),
-};
-
-// Serialize to JSON (or any other serde format)
-let json = serde_json::to_string(&data).unwrap();
-let deserialized: MyStruct = serde_json::from_str(&json).unwrap();
-
-assert_eq!(data.id.0, deserialized.id.0);
-assert_eq!(data.timestamp.0, deserialized.timestamp.0);
-assert_eq!(data.score.0, deserialized.score.0);
-```
-
-### SIMD Optimizations
-
-With the `simd` feature enabled, you can use high-performance bulk encoding and decoding operations:
-
-```rust
-use vlen::{bulk_encode_u32_safe, bulk_decode_u32_safe};
-
-let values = [1u32, 1000, 1000000, 1000000000];
-let mut buf = [0u8; 20];
-
-// Bulk encode multiple values
-let encoded_len = bulk_encode_u32_safe(&mut buf, &values)?;
-
-// Bulk decode multiple values
-let mut decoded_values = [0u32; 4];
-let decoded_len = bulk_decode_u32_safe(&buf[..encoded_len], &mut decoded_values)?;
-
-assert_eq!(values, decoded_values);
-```
-
-The SIMD optimizations are automatically selected based on your target architecture:
-
-- **x86_64**: Uses SSE2 instructions for optimal performance
-- **aarch64**: Uses ARM NEON instructions for optimal performance
-- **Other architectures**: Falls back to efficient scalar implementations
-
-The serde wrapper types provide easy access to their inner values through `Deref` and `DerefMut`:
-
-```rust
-use vlen::serde::VlenU32;
-
-let mut val = VlenU32(42);
-assert_eq!(*val, 42);
-
-*val = 100;
-assert_eq!(*val, 100);
-assert_eq!(val.0, 100);
-```
-
-### Const Context Support
-
-`vlen` provides `const fn` versions of encoding and decoding functions under the `vlen::const_encode` and `vlen::const_decode` modules. These are useful for compile-time evaluation but are **not optimized for runtime performance**.
-
-For runtime usage, always prefer the standard functions (`vlen::encode`, `vlen::decode`, etc.) which include optimizations like SIMD and unrolled loops.
-
-```rust
-use vlen::const_encode::encode_u32;
-use vlen::const_decode::decode_u32;
-
-const ENCODED_LEN: usize = {
-    let mut buf = [0u8; 5];
-    encode_u32(&mut buf, 12345)
-};
-```
+Every integer width uses this same grammar, so the encodings of a value
+are identical whether it is encoded as `u16`, `u32`, `u64`, or `u128`.
 
 ## Handling of over-long encodings
 
@@ -233,6 +189,27 @@ encoding] for signed integers and reverse-endian layout for floating-point.
 
 ["ZigZag" encoding]: https://protobuf.dev/programming-guides/encoding/#signed-ints
 
+## Breaking changes in 0.4.0
+
+- Errors are a typed [`enum Error`] implementing `core::error::Error`
+  instead of `&'static str`; `encoded_size` and the `Vec` constructors
+  are infallible.
+- `Encode::encode` takes `self` first (`value.encode(&mut buf)`), and
+  the checked API works with exactly-sized buffers on both sides.
+- **Wire format**: `u16`/`i16` three-byte encodings now use the same
+  prefix-varint grammar as the wider types. The previous `0xDE`-prefixed
+  raw form conflicted with the shared grammar and made `u16` streams
+  unreadable as `u32`/`u64`/`u128`. Two- and one-byte `u16` encodings
+  are unchanged.
+- The `simd` feature was removed. Its implementation produced
+  non-canonical output, decoded incorrectly, and contained
+  out-of-bounds accesses. The safe bulk functions (always available)
+  replace it; `bulk_encode_u32_safe` is now `bulk_encode_u32`.
+- The `const_encode`/`const_decode` modules were removed: the main
+  array-based functions are all `const fn` now.
+- Binary serde formats receive raw bytes instead of base64 strings.
+  JSON output is unchanged.
+
 ## License
 
 Licensed under **MPL-2.0** to guarantee future openness - see [LICENSE](LICENSE).
@@ -241,4 +218,5 @@ Retains `vu128` (ISC/0BSD) attribution in [LICENSE-VU128.txt](LICENSE-VU128.txt)
 
 ## Acknowledgments
 
-This crate is based on the original `vu128` implementation by John Millikin, with significant performance improvements and enhancements by Harrison Chin.
+This crate is based on the original `vu128` implementation by John Millikin,
+with performance improvements and enhancements by Harrison Chin.
