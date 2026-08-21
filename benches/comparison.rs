@@ -1,7 +1,9 @@
 //! Comparison against other integer encodings.
 //!
-//! Every codec is driven through its in-memory slice API so the
-//! comparison measures the codecs, not I/O machinery:
+//! Methodology: every codec is driven through its fastest public
+//! in-memory API, over identical values and reused buffers, in the
+//! same process, so the comparison measures the codecs rather than
+//! I/O machinery or allocation:
 //!
 //! - `leb128`: LEB128 via the `integer-encoding` crate
 //! - `prost`: the protobuf varint (LEB128) implementation from `prost`
@@ -11,8 +13,19 @@
 //! - `fixed`: raw little-endian `u32` words, as an upper throughput
 //!   bound that spends four bytes per value
 //!
-//! `prost` and `vint64` are 64-bit codecs; they are fed the same values
-//! widened to `u64`.
+//! Because vlen's array API is infallible while the other crates'
+//! entry points validate their input, the single-value benchmarks
+//! also include `vlen_checked` — the slice-based `Encode`/`Decode`
+//! path that performs the same validation work the other crates do.
+//!
+//! `prost` and `vint64` are 64-bit codecs; they are fed the same
+//! values widened to `u64`. The bulk rows use each crate's natural
+//! bulk usage: vlen's dedicated bulk functions, stream-vbyte's batch
+//! API, and per-value loops for the codecs that ship no bulk API.
+//!
+//! Distributions: `small` is uniform one-byte values, `mixed` cycles
+//! all size classes in a period the branch predictor can learn, and
+//! `random` draws sizes unpredictably.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use integer_encoding::VarInt;
@@ -20,7 +33,9 @@ use std::hint::black_box;
 use stream_vbyte::decode::decode as svb_decode;
 use stream_vbyte::encode::encode as svb_encode;
 use stream_vbyte::scalar::Scalar;
-use vlen::{bulk_decode_u32, bulk_encode_u32, decode_u32, encode_u32};
+use vlen::{
+	Decode, Encode, bulk_decode_u32, bulk_encode_u32, decode_u32, encode_u32,
+};
 
 const N: usize = 1024;
 
@@ -28,6 +43,18 @@ fn values(kind: &str) -> Vec<u32> {
 	(0..N as u32)
 		.map(|i| match kind {
 			"small" => i % 0x80,
+			"random" => {
+				let mut x = i.wrapping_mul(0x9E37_79B9) ^ 0xDEAD_BEEF;
+				x ^= x << 13;
+				x ^= x >> 17;
+				x ^= x << 5;
+				match x % 4 {
+					0 => x % 0x80,
+					1 => 0x80 + x % 0x3F80,
+					2 => 0x4000 + x % 0x1F_C000,
+					_ => 0x20_0000 + x % 0xFE0_0000,
+				}
+			},
 			_ => match i % 4 {
 				0 => i,
 				1 => 1000 + i,
@@ -45,6 +72,11 @@ fn bench_single_encode(c: &mut Criterion) {
 	let mut buf = [0u8; 5];
 	group.bench_function("vlen", |b| {
 		b.iter(|| encode_u32(black_box(&mut buf), black_box(value)))
+	});
+
+	let mut buf = [0u8; 5];
+	group.bench_function("vlen_checked", |b| {
+		b.iter(|| black_box(value).encode(black_box(&mut buf[..])).unwrap())
 	});
 
 	let mut buf = [0u8; 5];
@@ -84,6 +116,10 @@ fn bench_single_decode(c: &mut Criterion) {
 	let _ = encode_u32(&mut buf, value);
 	group.bench_function("vlen", |b| b.iter(|| decode_u32(black_box(&buf))));
 
+	group.bench_function("vlen_checked", |b| {
+		b.iter(|| u32::decode(black_box(&buf[..])).unwrap())
+	});
+
 	let mut buf = [0u8; 5];
 	let _ = value.encode_var(&mut buf);
 	group.bench_function("leb128", |b| {
@@ -116,7 +152,7 @@ fn bench_single_decode(c: &mut Criterion) {
 }
 
 fn bench_bulk_encode(c: &mut Criterion) {
-	for kind in ["mixed", "small"] {
+	for kind in ["small", "mixed", "random"] {
 		let mut group = c.benchmark_group(format!("bulk_encode/{kind}"));
 		let values = values(kind);
 		let wide: Vec<u64> = values.iter().map(|&v| v as u64).collect();
@@ -185,7 +221,7 @@ fn bench_bulk_encode(c: &mut Criterion) {
 }
 
 fn bench_bulk_decode(c: &mut Criterion) {
-	for kind in ["mixed", "small"] {
+	for kind in ["small", "mixed", "random"] {
 		let mut group = c.benchmark_group(format!("bulk_decode/{kind}"));
 		let values = values(kind);
 		let wide: Vec<u64> = values.iter().map(|&v| v as u64).collect();

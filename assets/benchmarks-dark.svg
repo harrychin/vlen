@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="576" viewBox="0 0 860 576" role="img" aria-label="Bulk decode benchmark: vlen versus LEB128, prost, vint64, and stream-vbyte across three value distributions">
+<style>text{font-family:-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;}.t1{fill:#ffffff;}.t2{fill:#c3c2b7;}</style>
+<text x="0" y="20" class="t1" font-size="17" font-weight="600">Bulk decode &#183; 1,024 u32 values &#183; lower is better</text>
+<text x="0" y="40" class="t2" font-size="12.5">benches/comparison.rs &#183; each codec through its fastest in-memory API &#183; Apple M-series &#183; criterion medians</text>
+<text x="0" y="76" class="t1" font-size="13.5" font-weight="600">Small values (all one-byte)</text>
+<text x="128" y="104.0" class="t2" font-size="12.5" text-anchor="end">vlen</text>
+<path d="M140,92.0 h30 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-30 z" fill="#3987e5"/>
+<text x="182" y="104.0" class="t1" font-size="12.5" font-weight="600">0.14 µs</text>
+<text x="128" y="128.0" class="t2" font-size="12.5" text-anchor="end">LEB128</text>
+<path d="M140,116.0 h586 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-586 z" fill="#d95926"/>
+<text x="738" y="128.0" class="t1" font-size="12.5" font-weight="600">2.40 µs</text>
+<text x="128" y="152.0" class="t2" font-size="12.5" text-anchor="end">prost</text>
+<path d="M140,140.0 h515 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-515 z" fill="#199e70"/>
+<text x="667" y="152.0" class="t1" font-size="12.5" font-weight="600">2.11 µs</text>
+<text x="128" y="176.0" class="t2" font-size="12.5" text-anchor="end">vint64</text>
+<path d="M140,164.0 h453 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-453 z" fill="#c98500"/>
+<text x="605" y="176.0" class="t1" font-size="12.5" font-weight="600">1.86 µs</text>
+<text x="128" y="200.0" class="t2" font-size="12.5" text-anchor="end">stream-vbyte</text>
+<path d="M140,188.0 h289 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-289 z" fill="#d55181"/>
+<text x="441" y="200.0" class="t1" font-size="12.5" font-weight="600">1.19 µs</text>
+<text x="0" y="248" class="t1" font-size="13.5" font-weight="600">Mixed sizes (periodic)</text>
+<text x="128" y="276.0" class="t2" font-size="12.5" text-anchor="end">vlen</text>
+<path d="M140,264.0 h367 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-367 z" fill="#3987e5"/>
+<text x="519" y="276.0" class="t1" font-size="12.5" font-weight="600">1.51 µs</text>
+<text x="128" y="300.0" class="t2" font-size="12.5" text-anchor="end">LEB128</text>
+<path d="M140,288.0 h527 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-527 z" fill="#d95926"/>
+<text x="679" y="300.0" class="t1" font-size="12.5" font-weight="600">2.16 µs</text>
+<text x="128" y="324.0" class="t2" font-size="12.5" text-anchor="end">prost</text>
+<path d="M140,312.0 h446 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-446 z" fill="#199e70"/>
+<text x="598" y="324.0" class="t1" font-size="12.5" font-weight="600">1.83 µs</text>
+<text x="128" y="348.0" class="t2" font-size="12.5" text-anchor="end">vint64</text>
+<path d="M140,336.0 h557 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-557 z" fill="#c98500"/>
+<text x="709" y="348.0" class="t1" font-size="12.5" font-weight="600">2.28 µs</text>
+<text x="128" y="372.0" class="t2" font-size="12.5" text-anchor="end">stream-vbyte</text>
+<path d="M140,360.0 h372 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-372 z" fill="#d55181"/>
+<text x="524" y="372.0" class="t1" font-size="12.5" font-weight="600">1.53 µs</text>
+<text x="0" y="420" class="t1" font-size="13.5" font-weight="600">Random sizes (unpredictable)</text>
+<text x="128" y="448.0" class="t2" font-size="12.5" text-anchor="end">vlen</text>
+<path d="M140,436.0 h409 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-409 z" fill="#3987e5"/>
+<text x="561" y="448.0" class="t1" font-size="12.5" font-weight="600">1.68 µs</text>
+<text x="128" y="472.0" class="t2" font-size="12.5" text-anchor="end">LEB128</text>
+<path d="M140,460.0 h628 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-628 z" fill="#d95926"/>
+<text x="780" y="472.0" class="t1" font-size="12.5" font-weight="600">2.57 µs</text>
+<text x="128" y="496.0" class="t2" font-size="12.5" text-anchor="end">prost</text>
+<path d="M140,484.0 h441 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-441 z" fill="#199e70"/>
+<text x="593" y="496.0" class="t1" font-size="12.5" font-weight="600">1.81 µs</text>
+<text x="128" y="520.0" class="t2" font-size="12.5" text-anchor="end">vint64</text>
+<path d="M140,508.0 h603 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-603 z" fill="#c98500"/>
+<text x="755" y="520.0" class="t1" font-size="12.5" font-weight="600">2.47 µs</text>
+<text x="128" y="544.0" class="t2" font-size="12.5" text-anchor="end">stream-vbyte</text>
+<path d="M140,532.0 h483 a4,4 0 0 1 4,4 v8 a4,4 0 0 1 -4,4 h-483 z" fill="#d55181"/>
+<text x="635" y="544.0" class="t1" font-size="12.5" font-weight="600">1.98 µs</text>
+</svg>
