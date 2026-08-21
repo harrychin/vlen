@@ -2,16 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use vlen::serde::{
-	VlenF32,
-	VlenF64,
-	VlenI16,
-	VlenI32,
-	VlenI64,
-	VlenI128,
-	VlenU16,
-	VlenU32,
-	VlenU64,
-	VlenU128,
+	VlenF32, VlenF64, VlenI16, VlenI32, VlenI64, VlenI128, VlenU16, VlenU32,
+	VlenU64, VlenU128,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

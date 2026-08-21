@@ -485,8 +485,8 @@ fn test_specialized_bulk_matches_generic() {
 		assert_eq!(&specialized[..specialized_len], &generic[..generic_len]);
 
 		let mut decoded = vec![0u32; values.len()];
-		let read = bulk_decode_u32(&generic[..generic_len], &mut decoded)
-			.unwrap();
+		let read =
+			bulk_decode_u32(&generic[..generic_len], &mut decoded).unwrap();
 		assert_eq!(read, generic_len);
 		assert_eq!(decoded, values);
 		Ok(())
@@ -580,8 +580,7 @@ fn test_bulk_u32_round_trip() {
 		let encoded_len = bulk_encode_u32(&mut buf, &values).unwrap();
 		buf.truncate(encoded_len);
 		let mut decoded_values = vec![0u32; values.len()];
-		let decoded_len =
-			bulk_decode_u32(&buf, &mut decoded_values).unwrap();
+		let decoded_len = bulk_decode_u32(&buf, &mut decoded_values).unwrap();
 		assert_eq!(decoded_len, encoded_len);
 		assert_eq!(values, decoded_values);
 		Ok(())

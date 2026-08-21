@@ -488,7 +488,7 @@ fn test_large_i128() {
 	let mut buf = [0u8; 17];
 	// A value that requires more than 64 bits
 	// 2^100
-	let value: i128 = 1 << 100; 
+	let value: i128 = 1 << 100;
 	let len = vlen::encode_i128(&mut buf, value);
 	let (decoded, decoded_len) = vlen::decode_i128(&buf);
 	assert_eq!(value, decoded, "Failed to round-trip large i128");

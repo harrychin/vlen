@@ -50,14 +50,11 @@ pub fn bulk_encode_u32(buf: &mut [u8], values: &[u32]) -> Result<usize> {
 	let mut offset = 0;
 	let mut i = 0;
 	while i < values.len() {
-		// Fast path: the next eight values all encode as one byte.
-		if let (Some(chunk), Some(dst)) = (
-			values.get(i..i + 8),
-			buf.get_mut(offset..offset + 8),
-		) {
-			let all_small =
-				chunk.iter().fold(0, |acc, &v| acc | v) < 0x80;
-			if all_small {
+		// Fast path: eight one-byte values become eight bytes.
+		if let (Some(chunk), Some(dst)) =
+			(values.get(i..i + 8), buf.get_mut(offset..offset + 8))
+		{
+			if chunk.iter().fold(0, |acc, &v| acc | v) < 0x80 {
 				for (d, &v) in dst.iter_mut().zip(chunk) {
 					*d = v as u8;
 				}
@@ -65,7 +62,16 @@ pub fn bulk_encode_u32(buf: &mut [u8], values: &[u32]) -> Result<usize> {
 				i += 8;
 				continue;
 			}
+			// The window holds a multi-byte value: encode the whole
+			// window one value at a time so the failed check is
+			// amortized across eight values.
+			for &value in chunk {
+				offset += value.encode(&mut buf[offset..])?;
+			}
+			i += 8;
+			continue;
 		}
+		// Tail shorter than a window.
 		offset += values[i].encode(&mut buf[offset..])?;
 		i += 1;
 	}
@@ -81,20 +87,32 @@ pub fn bulk_decode_u32(buf: &[u8], out: &mut [u32]) -> Result<usize> {
 	let mut offset = 0;
 	let mut i = 0;
 	while i < out.len() {
-		// Fast path: the next eight bytes are all one-byte encodings.
-		if i + 8 <= out.len() {
-			if let Some(chunk) = buf.get(offset..offset + 8) {
-				let word = u64::from_le_bytes(chunk.try_into().unwrap());
-				if word & 0x8080_8080_8080_8080 == 0 {
-					for (slot, &b) in out[i..i + 8].iter_mut().zip(chunk) {
-						*slot = b as u32;
-					}
-					offset += 8;
-					i += 8;
-					continue;
+		// Fast path: eight bytes with clear continuation bits are
+		// eight one-byte encodings.
+		if let (Some(chunk), Some(slots)) =
+			(buf.get(offset..offset + 8), out.get_mut(i..i + 8))
+		{
+			let word = u64::from_le_bytes(chunk.try_into().unwrap());
+			if word & 0x8080_8080_8080_8080 == 0 {
+				for (slot, &b) in slots.iter_mut().zip(chunk) {
+					*slot = b as u32;
 				}
+				offset += 8;
+				i += 8;
+				continue;
 			}
+			// The window holds a multi-byte encoding: decode the next
+			// eight values one at a time so the failed check is
+			// amortized across eight values.
+			for slot in slots {
+				let (value, len) = u32::decode(&buf[offset..])?;
+				*slot = value;
+				offset += len;
+			}
+			i += 8;
+			continue;
 		}
+		// Tail shorter than a window.
 		let (value, len) = u32::decode(&buf[offset..])?;
 		out[i] = value;
 		offset += len;
@@ -128,7 +146,7 @@ pub struct DecodeIter<'a, T> {
 }
 
 impl<'a, T> DecodeIter<'a, T> {
-    /// The byte offset of the next value in the underlying buffer.
+	/// The byte offset of the next value in the underlying buffer.
 	#[must_use]
 	pub fn offset(&self) -> usize {
 		self.offset

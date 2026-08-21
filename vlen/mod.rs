@@ -33,8 +33,8 @@
 //!
 //! ## Two API layers
 //!
-//! - The [`Encode`] and [`Decode`] traits (and the free [`encode`],
-//!   [`decode`], and [`bulk_encode`]/[`bulk_decode`] functions) work on
+//! - The [`Encode`] and [`Decode`] traits (and the free [`encode()`],
+//!   [`decode()`], and [`bulk_encode`]/[`bulk_decode`] functions) work on
 //!   ordinary slices, validate their input, and return typed
 //!   [`Error`]s. Use these for untrusted or exactly-sized data.
 //! - The array-based functions ([`encode_u32`], [`decode_u32`], and
@@ -50,7 +50,7 @@
 //! ```
 
 #![cfg_attr(not(test), no_std)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
@@ -66,47 +66,19 @@ pub mod serde;
 pub use error::{Error, Result};
 
 pub use decode::{
-	Decode,
-	decode,
-	decode_f32,
-	decode_f64,
-	decode_i16,
-	decode_i32,
-	decode_i64,
-	decode_i128,
-	decode_u16,
-	decode_u32,
-	decode_u64,
-	decode_u128,
+	Decode, decode, decode_f32, decode_f64, decode_i16, decode_i32, decode_i64,
+	decode_i128, decode_u16, decode_u32, decode_u64, decode_u128,
 };
 
 pub use encode::{
-	Encode,
-	encode,
-	encode_f32,
-	encode_f64,
-	encode_i16,
-	encode_i32,
-	encode_i64,
-	encode_i128,
-	encode_u16,
-	encode_u32,
-	encode_u64,
-	encode_u128,
-	encoded_len,
-	encoded_size,
-	encoded_size_u16,
-	encoded_size_u32,
-	encoded_size_u64,
+	Encode, encode, encode_f32, encode_f64, encode_i16, encode_i32, encode_i64,
+	encode_i128, encode_u16, encode_u32, encode_u64, encode_u128, encoded_len,
+	encoded_size, encoded_size_u16, encoded_size_u32, encoded_size_u64,
 	encoded_size_u128,
 };
 
 pub use bulk::{
-	DecodeIter,
-	bulk_decode,
-	bulk_decode_u32,
-	bulk_encode,
-	bulk_encode_u32,
+	DecodeIter, bulk_decode, bulk_decode_u32, bulk_encode, bulk_encode_u32,
 	decode_iter,
 };
 
@@ -137,8 +109,8 @@ pub fn encode_to_vec<T: Encode>(value: T) -> alloc::vec::Vec<u8> {
 pub fn bulk_encode_to_vec<T: Encode>(values: &[T]) -> alloc::vec::Vec<u8> {
 	let total = values.iter().map(|v| v.encoded_size()).sum();
 	let mut buf = alloc::vec![0u8; total];
-	let len = bulk_encode(&mut buf, values)
-		.expect("buffer sized by encoded_size");
+	let len =
+		bulk_encode(&mut buf, values).expect("buffer sized by encoded_size");
 	debug_assert_eq!(len, total);
 	buf
 }
@@ -147,8 +119,6 @@ pub fn bulk_encode_to_vec<T: Encode>(values: &[T]) -> alloc::vec::Vec<u8> {
 ///
 /// The buffer must contain a whole number of valid encodings.
 #[cfg(feature = "alloc")]
-pub fn bulk_decode_values<T: Decode>(
-	buf: &[u8],
-) -> Result<alloc::vec::Vec<T>> {
+pub fn bulk_decode_values<T: Decode>(buf: &[u8]) -> Result<alloc::vec::Vec<T>> {
 	decode_iter(buf).collect()
 }

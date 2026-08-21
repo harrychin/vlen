@@ -9,7 +9,7 @@
 //! `const fn`, so they can also be evaluated at compile time.
 //!
 //! For decoding untrusted or exactly-sized input, use the [`Decode`]
-//! trait or the free [`decode`](crate::decode) function: those validate
+//! trait or the free [`decode`](crate::decode()) function: those validate
 //! prefixes, buffer lengths, and value ranges.
 
 use crate::encode::encoded_len;
@@ -37,9 +37,7 @@ pub const fn decode_u16(buf: &[u8; 3]) -> (u16, usize) {
 	let b0 = buf[0];
 	match b0 {
 		_ if b0 < 0x80 => (b0 as u16, 1),
-		_ if b0 < 0xC0 => {
-			(((buf[1] as u16) << 6) | ((b0 & 0x3F) as u16), 2)
-		},
+		_ if b0 < 0xC0 => (((buf[1] as u16) << 6) | ((b0 & 0x3F) as u16), 2),
 		_ => {
 			let wide = ((buf[2] as u32) << 13)
 				| ((buf[1] as u32) << 5)
@@ -97,17 +95,17 @@ macro_rules! decode_unsigned {
 }
 
 decode_unsigned! {
-    /// Decodes a `u32` from a buffer, returning the value and encoded length.
+	/// Decodes a `u32` from a buffer, returning the value and encoded length.
 	decode_u32, u32, 5
 }
 
 decode_unsigned! {
-    /// Decodes a `u64` from a buffer, returning the value and encoded length.
+	/// Decodes a `u64` from a buffer, returning the value and encoded length.
 	decode_u64, u64, 9
 }
 
 decode_unsigned! {
-    /// Decodes a `u128` from a buffer, returning the value and encoded length.
+	/// Decodes a `u128` from a buffer, returning the value and encoded length.
 	decode_u128, u128, 17
 }
 
@@ -132,22 +130,22 @@ macro_rules! decode_signed {
 }
 
 decode_signed! {
-    /// Decodes an `i16` from a buffer, returning the value and encoded length.
+	/// Decodes an `i16` from a buffer, returning the value and encoded length.
 	decode_i16, i16, decode_u16, 3
 }
 
 decode_signed! {
-    /// Decodes an `i32` from a buffer, returning the value and encoded length.
+	/// Decodes an `i32` from a buffer, returning the value and encoded length.
 	decode_i32, i32, decode_u32, 5
 }
 
 decode_signed! {
-    /// Decodes an `i64` from a buffer, returning the value and encoded length.
+	/// Decodes an `i64` from a buffer, returning the value and encoded length.
 	decode_i64, i64, decode_u64, 9
 }
 
 decode_signed! {
-    /// Decodes an `i128` from a buffer, returning the value and encoded length.
+	/// Decodes an `i128` from a buffer, returning the value and encoded length.
 	decode_i128, i128, decode_u128, 17
 }
 
@@ -165,12 +163,12 @@ macro_rules! decode_float {
 }
 
 decode_float! {
-    /// Decodes an `f32` from a buffer, returning the value and encoded length.
+	/// Decodes an `f32` from a buffer, returning the value and encoded length.
 	decode_f32, f32, decode_u32, 5
 }
 
 decode_float! {
-    /// Decodes an `f64` from a buffer, returning the value and encoded length.
+	/// Decodes an `f64` from a buffer, returning the value and encoded length.
 	decode_f64, f64, decode_u64, 9
 }
 
@@ -186,17 +184,17 @@ pub fn decode<T: Decode>(buf: &[u8]) -> Result<(T, usize)> {
 
 /// Types that can be decoded using vlen.
 pub trait Decode: Sized {
-    /// The maximum possible encoded size for this type.
+	/// The maximum possible encoded size for this type.
 	const MAX_ENCODED_SIZE: usize;
 
-    /// Decodes a value from the slice, returning it with its encoded
-    /// length.
-    ///
-    /// The slice only needs to hold the value's actual encoding.
-    /// Fails with [`Error::BufferTooSmall`] on truncated input,
-    /// [`Error::InvalidPrefix`] if the first byte announces an encoding
-    /// longer than this type can produce, and [`Error::Overflow`] if
-    /// the encoded value exceeds the type's range.
+	/// Decodes a value from the slice, returning it with its encoded
+	/// length.
+	///
+	/// The slice only needs to hold the value's actual encoding.
+	/// Fails with [`Error::BufferTooSmall`] on truncated input,
+	/// [`Error::InvalidPrefix`] if the first byte announces an encoding
+	/// longer than this type can produce, and [`Error::Overflow`] if
+	/// the encoded value exceeds the type's range.
 	fn decode(buf: &[u8]) -> Result<(Self, usize)>;
 }
 
@@ -254,7 +252,8 @@ impl Decode for u16 {
 	fn decode(buf: &[u8]) -> Result<(Self, usize)> {
 		// Decode through the u32 grammar so that three-byte encodings
 		// carrying values above u16::MAX are rejected, not truncated.
-		let (value, len): (u32, usize) = checked_decode!(buf, 3, decode_u16_wide)?;
+		let (value, len): (u32, usize) =
+			checked_decode!(buf, 3, decode_u16_wide)?;
 		if value > u16::MAX as u32 {
 			return Err(Error::Overflow);
 		}
@@ -269,9 +268,7 @@ const fn decode_u16_wide(buf: &[u8; 3]) -> (u32, usize) {
 	let b0 = buf[0];
 	match b0 {
 		_ if b0 < 0x80 => (b0 as u32, 1),
-		_ if b0 < 0xC0 => {
-			(((buf[1] as u32) << 6) | ((b0 & 0x3F) as u32), 2)
-		},
+		_ if b0 < 0xC0 => (((buf[1] as u32) << 6) | ((b0 & 0x3F) as u32), 2),
 		_ => {
 			let value = ((buf[2] as u32) << 13)
 				| ((buf[1] as u32) << 5)

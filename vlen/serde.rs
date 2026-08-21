@@ -197,42 +197,42 @@ macro_rules! vlen_wrapper {
 }
 
 vlen_wrapper! {
-    /// Serializes a `u16` using vlen encoding.
+	/// Serializes a `u16` using vlen encoding.
 	VlenU16(u16), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes a `u32` using vlen encoding.
+	/// Serializes a `u32` using vlen encoding.
 	VlenU32(u32), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes a `u64` using vlen encoding.
+	/// Serializes a `u64` using vlen encoding.
 	VlenU64(u64), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes a `u128` using vlen encoding.
+	/// Serializes a `u128` using vlen encoding.
 	VlenU128(u128), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes an `i16` using vlen encoding.
+	/// Serializes an `i16` using vlen encoding.
 	VlenI16(i16), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes an `i32` using vlen encoding.
+	/// Serializes an `i32` using vlen encoding.
 	VlenI32(i32), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes an `i64` using vlen encoding.
+	/// Serializes an `i64` using vlen encoding.
 	VlenI64(i64), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes an `i128` using vlen encoding.
+	/// Serializes an `i128` using vlen encoding.
 	VlenI128(i128), Eq, Ord, Hash
 }
 vlen_wrapper! {
-    /// Serializes an `f32` using vlen encoding.
+	/// Serializes an `f32` using vlen encoding.
 	VlenF32(f32)
 }
 vlen_wrapper! {
-    /// Serializes an `f64` using vlen encoding.
+	/// Serializes an `f64` using vlen encoding.
 	VlenF64(f64)
 }

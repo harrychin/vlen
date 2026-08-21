@@ -8,7 +8,7 @@
 //! `const fn`, so they can also be evaluated at compile time.
 //!
 //! For encoding into arbitrary slices with error handling, use the
-//! [`Encode`] trait or the free [`encode`](crate::encode) function.
+//! [`Encode`] trait or the free [`encode`](crate::encode()) function.
 
 use crate::error::{Error, Result};
 
@@ -145,17 +145,17 @@ macro_rules! encode_unsigned {
 }
 
 encode_unsigned! {
-    /// Encodes a `u32` into a buffer, returning the encoded length.
+	/// Encodes a `u32` into a buffer, returning the encoded length.
 	encode_u32, u32, 5, 0b11
 }
 
 encode_unsigned! {
-    /// Encodes a `u64` into a buffer, returning the encoded length.
+	/// Encodes a `u64` into a buffer, returning the encoded length.
 	encode_u64, u64, 9, 0b111
 }
 
 encode_unsigned! {
-    /// Encodes a `u128` into a buffer, returning the encoded length.
+	/// Encodes a `u128` into a buffer, returning the encoded length.
 	encode_u128, u128, 17, 0b1111
 }
 
@@ -179,22 +179,22 @@ macro_rules! zigzag {
 }
 
 encode_signed! {
-    /// Encodes an `i16` into a buffer, returning the encoded length.
+	/// Encodes an `i16` into a buffer, returning the encoded length.
 	encode_i16, i16, u16, encode_u16, 3
 }
 
 encode_signed! {
-    /// Encodes an `i32` into a buffer, returning the encoded length.
+	/// Encodes an `i32` into a buffer, returning the encoded length.
 	encode_i32, i32, u32, encode_u32, 5
 }
 
 encode_signed! {
-    /// Encodes an `i64` into a buffer, returning the encoded length.
+	/// Encodes an `i64` into a buffer, returning the encoded length.
 	encode_i64, i64, u64, encode_u64, 9
 }
 
 encode_signed! {
-    /// Encodes an `i128` into a buffer, returning the encoded length.
+	/// Encodes an `i128` into a buffer, returning the encoded length.
 	encode_i128, i128, u128, encode_u128, 17
 }
 
@@ -211,12 +211,12 @@ macro_rules! encode_float {
 }
 
 encode_float! {
-    /// Encodes an `f32` into a buffer, returning the encoded length.
+	/// Encodes an `f32` into a buffer, returning the encoded length.
 	encode_f32, f32, encode_u32, 5
 }
 
 encode_float! {
-    /// Encodes an `f64` into a buffer, returning the encoded length.
+	/// Encodes an `f64` into a buffer, returning the encoded length.
 	encode_f64, f64, encode_u64, 9
 }
 
@@ -238,17 +238,17 @@ pub fn encoded_size<T: Encode>(value: T) -> usize {
 
 /// Types that can be encoded using vlen.
 pub trait Encode: Copy {
-    /// The maximum possible encoded size for this type.
+	/// The maximum possible encoded size for this type.
 	const MAX_ENCODED_SIZE: usize;
 
-    /// Calculates the encoded size of the value without encoding it.
+	/// Calculates the encoded size of the value without encoding it.
 	#[must_use]
 	fn encoded_size(self) -> usize;
 
-    /// Encodes the value into the slice, returning the encoded length.
-    ///
-    /// The slice only needs room for the value's actual encoded size.
-    /// Fails with [`Error::BufferTooSmall`] otherwise.
+	/// Encodes the value into the slice, returning the encoded length.
+	///
+	/// The slice only needs room for the value's actual encoded size.
+	/// Fails with [`Error::BufferTooSmall`] otherwise.
 	fn encode(self, buf: &mut [u8]) -> Result<usize>;
 }
 

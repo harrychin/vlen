@@ -7,20 +7,20 @@
 /// the caller through their array parameter types instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Error {
-    /// The buffer is too small to hold or supply the encoded value.
+	/// The buffer is too small to hold or supply the encoded value.
 	BufferTooSmall {
-        /// Minimum number of bytes required.
+		/// Minimum number of bytes required.
 		needed: usize,
-        /// Number of bytes that were available.
+		/// Number of bytes that were available.
 		available: usize,
 	},
-    /// The first byte announces an encoding longer than the target type
-    /// can ever produce.
+	/// The first byte announces an encoding longer than the target type
+	/// can ever produce.
 	InvalidPrefix {
-        /// The offending prefix byte.
+		/// The offending prefix byte.
 		prefix: u8,
 	},
-    /// The encoded value does not fit in the target type.
+	/// The encoded value does not fit in the target type.
 	Overflow,
 }
 
