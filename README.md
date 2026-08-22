@@ -34,8 +34,8 @@ first byte instead of continuation bits spread across the value, so
 decoding is one predicted branch:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/benchmarks-dark.svg">
-  <img alt="Bulk decode of 1,024 u32 values: vlen is fastest across small, mixed, and random distributions against LEB128, prost, vint64, and stream-vbyte" src="assets/benchmarks-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/harrychin/vlen/main/assets/benchmarks-dark.svg">
+  <img alt="Bulk decode of 1,024 u32 values: vlen is fastest across small, mixed, and random distributions against LEB128, prost, vint64, and stream-vbyte" src="https://raw.githubusercontent.com/harrychin/vlen/main/assets/benchmarks-light.svg">
 </picture>
 
 Encode and single-value results from the same run, with honest losses
