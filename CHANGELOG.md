@@ -1,14 +1,13 @@
 # Changelog
 
-## 0.4.5
+## 0.4.6
 
 ### Fixed
 
 - The README benchmark chart now uses absolute image URLs: crates.io
   rewrites a relative `<img src>` but not `<source srcset>`, so the
   dark-mode chart resolved against crates.io itself and the image
-  broke there. Also ships the new `examples/wal.rs` write-ahead-log
-  example in the crate package.
+  broke there.
 
 ## 0.4.5
 
