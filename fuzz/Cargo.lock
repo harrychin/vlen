@@ -322,7 +322,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "vlen"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "base64",
  "serde",

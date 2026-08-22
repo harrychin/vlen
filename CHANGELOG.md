@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.5
 
 ### Added
 
@@ -14,6 +14,8 @@
   protocols.
 - Hostile-stream fuzz targets, big-endian s390x test coverage, and semver
   compatibility checks in CI.
+- A runnable write-ahead-log example covering framing, delta encoding,
+  torn-tail crash recovery, and the bulk paths.
 
 ### Fixed
 
