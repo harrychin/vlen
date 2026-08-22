@@ -60,7 +60,12 @@ The `encode_*` functions never generate over-long encodings, but the
 `decode_*` functions accept them. This allows a `vlen` slot to be
 reserved in a buffer before the value to be written is known.
 Applications that require a single canonical encoding for any given
-value should perform appropriate checking in their own code.
+value can use `decode_canonical`; `decode_exact` separately requires
+the first value to consume the whole slice, and `decode_strict`
+requires both properties. Built-in types validate both encoded length
+and canonical prefix form without allocating or re-encoding the value;
+downstream codecs that accept same-length aliases define their match
+through `Encode::is_canonical_encoding`.
 
 ### Signed integers and floating-point values
 

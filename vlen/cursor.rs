@@ -1,9 +1,9 @@
 //! Sequential cursors for encoding and decoding mixed-type messages
 //! without manual offset bookkeeping.
 
-use crate::decode::Decode;
+use crate::decode::{Decode, decode_canonical};
 use crate::encode::Encode;
-use crate::error::Result;
+use crate::error::{Result, StrictError, StrictResult};
 
 /// Writes consecutive values into a byte slice, tracking the position.
 ///
@@ -102,6 +102,15 @@ impl<'a> Reader<'a> {
 		Ok(value)
 	}
 
+	/// Decodes the next value only if its encoding is canonical.
+	///
+	/// On error the position is unchanged.
+	pub fn read_canonical<T: Decode + Encode>(&mut self) -> StrictResult<T> {
+		let (value, len) = decode_canonical(&self.buf[self.pos..])?;
+		self.pos += len;
+		Ok(value)
+	}
+
 	/// The number of bytes consumed so far.
 	#[must_use]
 	pub fn position(&self) -> usize {
@@ -124,5 +133,19 @@ impl<'a> Reader<'a> {
 	#[must_use]
 	pub fn remaining_bytes(&self) -> &'a [u8] {
 		&self.buf[self.pos..]
+	}
+
+	/// Consumes the reader and verifies that every input byte was read.
+	///
+	/// Returns [`StrictError::TrailingBytes`] when unread input remains.
+	pub fn finish(self) -> StrictResult<()> {
+		if self.pos == self.buf.len() {
+			Ok(())
+		} else {
+			Err(StrictError::TrailingBytes {
+				consumed: self.pos,
+				available: self.buf.len(),
+			})
+		}
 	}
 }

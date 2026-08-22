@@ -27,6 +27,16 @@ pub const fn encoded_len(b: u8) -> usize {
 	}
 }
 
+/// Whether `encoding` uses the canonical prefix for its total length.
+///
+/// Binary prefixes `0xF0..=0xF2` overlap the two- through four-byte
+/// prefix-varint forms. Canonical encoders use the prefix-varint form there;
+/// binary prefixes are canonical only from five bytes onward.
+#[inline(always)]
+fn has_canonical_prefix(encoding: &[u8]) -> bool {
+	encoding.len() >= 5 || encoding.first().is_some_and(|&first| first < 0xF0)
+}
+
 /// Calculates the encoded size of a `u8` value without encoding it.
 #[inline]
 #[must_use]
@@ -284,19 +294,46 @@ pub fn encoded_size<T: Encode>(value: T) -> usize {
 }
 
 /// Types that can be encoded using vlen.
+///
+/// # Implementation contract
+///
+/// Downstream implementations must report an exact, nonzero
+/// [`encoded_size`](Encode::encoded_size) no greater than
+/// [`MAX_ENCODED_SIZE`](Encode::MAX_ENCODED_SIZE). Encoding into a slice at
+/// least that long must succeed and return that same size; shorter slices must
+/// return [`Error::BufferTooSmall`]. Generic allocation and bulk helpers rely
+/// on these guarantees.
+///
+/// Only the first `returned size` bytes are part of the encoding. An
+/// implementation may use later bytes in a larger destination as scratch.
+/// If [`Decode`](crate::Decode) accepts multiple same-length representations
+/// of one value, the implementation must also override
+/// [`is_canonical_encoding`](Encode::is_canonical_encoding).
 pub trait Encode: Copy {
-	/// The maximum possible encoded size for this type.
+	/// The nonzero maximum possible encoded size for this type.
 	const MAX_ENCODED_SIZE: usize;
 
-	/// Calculates the encoded size of the value without encoding it.
+	/// Calculates the exact encoded size of the value without encoding it.
 	#[must_use]
 	fn encoded_size(self) -> usize;
 
 	/// Encodes the value into the slice, returning the encoded length.
 	///
 	/// The slice only needs room for the value's actual encoded size.
-	/// Fails with [`Error::BufferTooSmall`] otherwise.
+	/// Fails with [`Error::BufferTooSmall`] otherwise. Bytes after the returned
+	/// length are unspecified.
 	fn encode(self, buf: &mut [u8]) -> Result<usize>;
+
+	/// Whether `encoding`, after decoding to this value, uses canonical form.
+	///
+	/// The default accepts encodings whose length matches [`encoded_size`].
+	/// Implementations whose [`Decode`](crate::Decode) accepts multiple
+	/// same-length representations of a value must override this method so
+	/// [`decode_canonical`](crate::decode_canonical) can distinguish them.
+	#[must_use]
+	fn is_canonical_encoding(self, encoding: &[u8]) -> bool {
+		encoding.len() == self.encoded_size()
+	}
 }
 
 /// Implements [`Encode`] on top of an array-based encoder plus a size
@@ -346,6 +383,12 @@ macro_rules! impl_encode {
 					$short_fn(self, buf)
 				}
 			}
+
+			#[inline]
+			fn is_canonical_encoding(self, encoding: &[u8]) -> bool {
+				encoding.len() == self.encoded_size()
+					&& has_canonical_prefix(encoding)
+			}
 		}
 	};
 }
@@ -389,6 +432,11 @@ impl Encode for usize {
 	fn encode(self, buf: &mut [u8]) -> Result<usize> {
 		(self as u64).encode(buf)
 	}
+
+	#[inline]
+	fn is_canonical_encoding(self, encoding: &[u8]) -> bool {
+		(self as u64).is_canonical_encoding(encoding)
+	}
 }
 
 /// `isize` encodes through the `i64` grammar, so the wire format is
@@ -404,6 +452,11 @@ impl Encode for isize {
 	#[inline(always)]
 	fn encode(self, buf: &mut [u8]) -> Result<usize> {
 		(self as i64).encode(buf)
+	}
+
+	#[inline]
+	fn is_canonical_encoding(self, encoding: &[u8]) -> bool {
+		(self as i64).is_canonical_encoding(encoding)
 	}
 }
 

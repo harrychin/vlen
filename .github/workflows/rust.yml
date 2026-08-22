@@ -92,3 +92,38 @@ jobs:
         run: cargo test --target wasm32-wasip1 --features simd --test contract_tests --test property_tests --test tests
         env:
           RUSTFLAGS: -C target-feature=+simd128
+
+  big-endian:
+    name: Big-endian (s390x)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross@0.2.5
+          fallback: none
+      - name: Test portable paths
+        run: cross test --target s390x-unknown-linux-gnu --no-default-features --test contract_tests --test property_tests --test tests
+      - name: Test serde
+        run: cross test --target s390x-unknown-linux-gnu --features serde --test serde_tests
+
+  fuzz:
+    name: Fuzz smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz checked decoders
+        run: cargo fuzz run decode_arbitrary -- -max_total_time=10
+      - name: Fuzz serde visitors
+        run: cargo fuzz run serde_arbitrary -- -max_total_time=10
+
+  semver:
+    name: Semver compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: obi1kenobi/cargo-semver-checks-action@v2

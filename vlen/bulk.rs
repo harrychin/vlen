@@ -690,8 +690,9 @@ impl<'a, T: Decode> Iterator for DecodeIter<'a, T> {
 		if self.failed || remaining == 0 {
 			(0, Some(0))
 		} else {
-			// Every value occupies between 1 and MAX_ENCODED_SIZE bytes.
-			(remaining.div_ceil(T::MAX_ENCODED_SIZE), Some(remaining))
+			// An unvalidated tail guarantees only one item: its first
+			// prefix may produce the iterator's terminal error.
+			(1, Some(remaining))
 		}
 	}
 }
@@ -771,10 +772,9 @@ macro_rules! run_iter {
 					return (buffered, Some(buffered));
 				}
 				let remaining = self.buf.len() - self.offset;
+				let tail = usize::from(remaining != 0);
 				(
-					buffered
-						+ remaining
-							.div_ceil(<$ut as Decode>::MAX_ENCODED_SIZE),
+					buffered + tail,
 					Some(buffered + remaining),
 				)
 			}
@@ -891,10 +891,9 @@ macro_rules! run_iter_signed {
 					return (buffered, Some(buffered));
 				}
 				let remaining = self.buf.len() - self.offset;
+				let tail = usize::from(remaining != 0);
 				(
-					buffered
-						+ remaining
-							.div_ceil(<$it as Decode>::MAX_ENCODED_SIZE),
+					buffered + tail,
 					Some(buffered + remaining),
 				)
 			}

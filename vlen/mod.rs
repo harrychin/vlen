@@ -37,7 +37,7 @@
 //! - The [`Encode`] and [`Decode`] traits (and the free [`encode()`],
 //!   [`decode()`], and [`bulk_encode`]/[`bulk_decode`] functions) work on
 //!   ordinary slices, validate their input, and return typed
-//!   [`Error`]s. Use these for untrusted or exactly-sized data.
+//!   [`Error`]s. Use these for untrusted or tightly-sized data.
 //! - The array-based functions ([`encode_u32`], [`decode_u32`], and
 //!   friends) are the infallible fast core. They are all `const fn`,
 //!   so they also work in compile-time contexts:
@@ -48,6 +48,35 @@
 //!     vlen::encode_u32(&mut buf, 12345)
 //! };
 //! assert_eq!(LEN, 2);
+//! ```
+//!
+//! ## Choosing an API
+//!
+//! | Need | Use |
+//! | --- | --- |
+//! | One checked value | [`Encode`]/[`Decode`] or [`encode()`]/[`decode()`] |
+//! | Canonical first value | [`decode_canonical()`] |
+//! | Exact whole input | [`decode_exact()`]; use [`decode_strict()`] when it must also be canonical |
+//! | A mixed-type message | [`Writer`] and [`Reader`]; use [`Reader::read_canonical`] and [`Reader::finish`] for strict fields and framing |
+//! | A homogeneous batch | [`bulk_encode()`]/[`bulk_decode()`], or the specialized `u32`, `u64`, `i32`, and `i64` variants |
+//! | Lazy stream decoding | [`decode_iter()`], or a specialized iterator such as [`decode_iter_u32()`] |
+//! | An owned buffer (`alloc`) | [`encode_to_vec()`], [`encode_append()`], and the bulk `Vec` helpers |
+//! | Compile-time or trusted fixed arrays | [`encode_u32()`]/[`decode_u32()`] and their typed counterparts |
+//!
+//! ## Exact and canonical decoding
+//!
+//! The normal decoder accepts over-long encodings so protocols can reserve a
+//! fixed-width slot before its value is known. Opt into stricter validation
+//! when encoded bytes must have one deterministic representation:
+//!
+//! ```rust
+//! let reserved = [0x85, 0x00]; // the value 5 in an over-long two-byte slot
+//! assert_eq!(vlen::decode::<u32>(&reserved), Ok((5, 2)));
+//! assert!(matches!(
+//!     vlen::decode_strict::<u32>(&reserved),
+//!     Err(vlen::StrictError::NonCanonical { .. })
+//! ));
+//! assert_eq!(vlen::decode_exact::<u32>(&[5]), Ok(5));
 //! ```
 
 #![cfg_attr(not(test), no_std)]
@@ -76,12 +105,12 @@ mod kernels;
 pub mod serde;
 
 pub use cursor::{Reader, Writer};
-pub use error::{Error, Result};
+pub use error::{Error, Result, StrictError, StrictResult};
 
 pub use decode::{
-	Decode, decode, decode_f32, decode_f64, decode_i8, decode_i16, decode_i32,
-	decode_i64, decode_i128, decode_u8, decode_u16, decode_u32, decode_u64,
-	decode_u128,
+	Decode, decode, decode_canonical, decode_exact, decode_f32, decode_f64,
+	decode_i8, decode_i16, decode_i32, decode_i64, decode_i128, decode_strict,
+	decode_u8, decode_u16, decode_u32, decode_u64, decode_u128,
 };
 
 pub use encode::{
@@ -122,12 +151,28 @@ pub fn encode_to_vec<T: Encode>(value: T) -> alloc::vec::Vec<u8> {
 
 /// Appends the encoding of `value` to a byte vector.
 #[cfg(feature = "alloc")]
+#[inline]
 pub fn encode_append<T: Encode>(buf: &mut alloc::vec::Vec<u8>, value: T) {
-	let mut tmp = [0u8; 17];
+	const STACK_SIZE: usize = <u128 as Encode>::MAX_ENCODED_SIZE;
+	if T::MAX_ENCODED_SIZE <= STACK_SIZE {
+		let mut tmp = [0u8; STACK_SIZE];
+		let len = value
+			.encode(&mut tmp)
+			.expect("MAX_ENCODED_SIZE fits the stack buffer");
+		debug_assert_eq!(len, value.encoded_size());
+		buf.extend_from_slice(&tmp[..len]);
+		return;
+	}
+	let start = buf.len();
+	let predicted = value.encoded_size();
+	let end = start
+		.checked_add(predicted)
+		.expect("encoded size overflows Vec length");
+	buf.resize(end, 0);
 	let len = value
-		.encode(&mut tmp)
-		.expect("seventeen bytes fit any encoding");
-	buf.extend_from_slice(&tmp[..len]);
+		.encode(&mut buf[start..])
+		.expect("buffer sized by encoded_size");
+	debug_assert_eq!(len, predicted);
 }
 
 /// Appends the encodings of all `values` to a byte vector.

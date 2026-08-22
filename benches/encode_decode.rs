@@ -1,8 +1,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use vlen::{
-	decode_u16, decode_u32, decode_u64, decode_u128, encode_u16, encode_u32,
-	encode_u64, encode_u128,
+	decode, decode_strict, decode_u8, decode_u16, decode_u32, decode_u64,
+	decode_u128, encode_u16, encode_u32, encode_u64, encode_u128,
 };
 
 macro_rules! encode_bench {
@@ -55,6 +55,40 @@ decode_bench!(
 	0x1234567890ABCDEF1234567890ABCDEFu128
 );
 
+fn bench_decode_u32_checked(c: &mut Criterion) {
+	let mut buf = [0u8; 5];
+	let len = encode_u32(&mut buf, 12345678);
+	c.bench_function("decode_u32_checked", |b| {
+		b.iter(|| decode::<u32>(black_box(&buf[..len])).unwrap())
+	});
+}
+
+fn bench_decode_u32_strict(c: &mut Criterion) {
+	let mut buf = [0u8; 5];
+	let len = encode_u32(&mut buf, 12345678);
+	c.bench_function("decode_u32_strict", |b| {
+		b.iter(|| decode_strict::<u32>(black_box(&buf[..len])).unwrap())
+	});
+}
+
+fn bench_narrow_decoders(c: &mut Criterion) {
+	let u8_two = [0xBF, 0x03];
+	c.bench_function("decode_u8/two_byte", |b| {
+		b.iter(|| decode_u8(black_box(&u8_two)))
+	});
+	c.bench_function("decode_u8_checked/two_byte", |b| {
+		b.iter(|| decode::<u8>(black_box(&u8_two)).unwrap())
+	});
+
+	let u16_three = [0xDF, 0xFF, 0x07];
+	c.bench_function("decode_u16/three_byte", |b| {
+		b.iter(|| decode_u16(black_box(&u16_three)))
+	});
+	c.bench_function("decode_u16_checked/three_byte", |b| {
+		b.iter(|| decode::<u16>(black_box(&u16_three)).unwrap())
+	});
+}
+
 criterion_group!(
 	benches,
 	bench_encode_u16,
@@ -65,5 +99,8 @@ criterion_group!(
 	bench_decode_u32,
 	bench_decode_u64,
 	bench_decode_u128,
+	bench_decode_u32_checked,
+	bench_decode_u32_strict,
+	bench_narrow_decoders,
 );
 criterion_main!(benches);

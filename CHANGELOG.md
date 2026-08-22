@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `decode_exact`, `decode_canonical`, and `decode_strict`: additive,
+  allocation-free validation for whole-slice consumption and canonical
+  encodings, extensible through `Encode::is_canonical_encoding`, with a
+  separate non-exhaustive `StrictError` that preserves the v0.4 `Error`
+  contract.
+- `Reader::read_canonical` and `Reader::finish`: transactional canonical
+  field decoding and explicit whole-message consumption checks for mixed-type
+  protocols.
+- Hostile-stream fuzz targets, big-endian s390x test coverage, and semver
+  compatibility checks in CI.
+
+### Fixed
+
+- Decoding iterators no longer overstate their `size_hint` lower bound when
+  malformed input can produce an immediate terminal error.
+- `encode_append` now honors conforming downstream `Encode` implementations
+  larger than the built-in 17-byte maximum while retaining the stack-buffer
+  fast path for built-in types.
+- The `u8` and `u16` decoders now handle valid short binary-prefix over-long
+  encodings consistently, without reporting that they consumed beyond the
+  supplied slice. Those uncommon forms stay on cold paths so ordinary
+  prefix-varint decoding retains its prior hot-path performance.
+- Canonical decoding now rejects same-length binary-prefix aliases below
+  `2^28`, ensuring each built-in value has one accepted canonical byte
+  representation.
+
 ## 0.4.4
 
 ### Added
@@ -7,10 +37,10 @@
 - `Writer` and `Reader`: sequential cursors over byte slices for
   encoding and decoding mixed-type messages without manual offset
   bookkeeping (`no_std`, zero-cost).
-- `Encode`/`Decode` for `u8`, `i8`, `usize`, and `isize`, plus their
-  array-based `const fn` codecs. `u8`/`i8` share the `u16` grammar;
-  `usize`/`isize` share `u64`/`i64`, so the wire format stays
-  identical across platforms (with `Overflow` on narrower targets).
+- `Encode`/`Decode` for `u8`, `i8`, `usize`, and `isize`; `u8`/`i8` also
+  gain array-based `const fn` codecs. `u8`/`i8` share the `u16` grammar;
+  `usize`/`isize` share `u64`/`i64`, so the wire format stays identical
+  across platforms (with `Overflow` on narrower targets).
 - `encode_append` and `bulk_encode_append`: append encodings to an
   existing `Vec<u8>` without the per-value allocation of
   `encode_to_vec`.

@@ -7,8 +7,9 @@
 //! byte-for-byte compatible with the per-value scalar codec.
 
 use vlen::{
-	Decode, Encode, Error, bulk_decode, bulk_decode_u32, bulk_decode_u64,
-	bulk_encode, bulk_encode_u32, bulk_encode_u64, decode_iter,
+	Decode, Encode, Error, StrictError, bulk_decode, bulk_decode_u32,
+	bulk_decode_u64, bulk_encode, bulk_encode_u32, bulk_encode_u64,
+	decode_iter,
 };
 
 #[test]
@@ -23,6 +24,7 @@ fn round_trip_from_exact_slices() {
 		let (decoded, decoded_len) = T::decode(exact).unwrap();
 		assert_eq!(decoded, value);
 		assert_eq!(decoded_len, len);
+		assert_eq!(vlen::decode_strict::<T>(exact), Ok(value));
 
 		// Encoding must succeed into a buffer of exactly the right size.
 		let mut tight = vec![0u8; len];
@@ -89,6 +91,72 @@ fn decode_truncated_value_is_an_error() {
 }
 
 #[test]
+fn exact_decode_rejects_trailing_bytes_but_accepts_overlong_values() {
+	assert_eq!(vlen::decode_exact::<u32>(&[5]), Ok(5));
+	assert_eq!(
+		vlen::decode_exact::<u32>(&[5, 6]),
+		Err(StrictError::TrailingBytes {
+			consumed: 1,
+			available: 2,
+		})
+	);
+	// Exact consumption and canonicality are independent validation modes.
+	assert_eq!(vlen::decode_exact::<u32>(&[0x85, 0]), Ok(5));
+}
+
+#[test]
+fn canonical_decode_rejects_overlong_values_but_allows_a_trailing_value() {
+	assert_eq!(
+		vlen::decode_canonical::<u32>(&[0x85, 0]),
+		Err(StrictError::NonCanonical {
+			encoded_len: 2,
+			canonical_len: 1,
+		})
+	);
+	assert_eq!(vlen::decode_canonical::<u32>(&[5, 6]), Ok((5, 1)));
+
+	// Binary prefixes below 2^28 are non-canonical even when the alternate
+	// form happens to use the same number of bytes as the canonical encoding.
+	for (bytes, value) in [
+		(&[0xF0, 0x80][..], 0x80),
+		(&[0xF1, 0x00, 0x40][..], 0x4000),
+		(&[0xF2, 0x00, 0x00, 0x20][..], 0x20_0000),
+	] {
+		assert_eq!(u32::decode(bytes), Ok((value, bytes.len())));
+		assert_eq!(
+			vlen::decode_canonical::<u32>(bytes),
+			Err(StrictError::NonCanonical {
+				encoded_len: bytes.len(),
+				canonical_len: bytes.len(),
+			})
+		);
+	}
+}
+
+#[test]
+fn strict_decode_requires_one_canonical_whole_value() {
+	assert_eq!(vlen::decode_strict::<u32>(&[5]), Ok(5));
+	assert_eq!(
+		vlen::decode_strict::<u32>(&[5, 6]),
+		Err(StrictError::TrailingBytes {
+			consumed: 1,
+			available: 2,
+		})
+	);
+	assert_eq!(
+		vlen::decode_strict::<u32>(&[0x85, 0]),
+		Err(StrictError::NonCanonical {
+			encoded_len: 2,
+			canonical_len: 1,
+		})
+	);
+	assert_eq!(
+		vlen::decode_strict::<u32>(&[0xF9]),
+		Err(StrictError::Decode(Error::InvalidPrefix { prefix: 0xF9 }))
+	);
+}
+
+#[test]
 fn decode_rejects_prefixes_too_long_for_the_type() {
 	// 0xF4 announces a 6-byte encoding: valid for u64/u128, not u32.
 	let six_byte = [0xF4u8, 1, 0, 0, 0, 1];
@@ -144,6 +212,20 @@ fn u16_shares_the_u32_wire_format() {
 		let (as_u16, _) = u16::decode(&buf32[..len32]).unwrap();
 		assert_eq!(as_u16, value);
 	}
+}
+
+#[test]
+fn narrow_decoders_accept_short_binary_prefix_encodings() {
+	// The binary-prefix grammar is shared across widths, including its
+	// over-long forms. Results must not depend on whether trailing bytes are
+	// available to the checked decoder.
+	assert_eq!(u8::decode(&[0xF0, 0xFF]), Ok((0xFF, 2)));
+	assert_eq!(u16::decode(&[0xF0, 0x3D]), Ok((0x3D, 2)));
+	assert_eq!(u16::decode(&[0xF0, 0x3D, 0]), Ok((0x3D, 2)));
+	assert_eq!(u16::decode(&[0xF1, 0x34, 0x12]), Ok((0x1234, 3)));
+	assert_eq!(vlen::decode_u8(&[0xF0, 0xFF]), (0xFF, 2));
+	assert_eq!(vlen::decode_u16(&[0xF0, 0x3D, 0]), (0x3D, 2));
+	assert_eq!(vlen::decode_u16(&[0xF1, 0x34, 0x12]), (0x1234, 3));
 }
 
 #[test]
@@ -342,11 +424,49 @@ fn decode_iter_reports_errors_and_stops() {
 }
 
 #[test]
+fn decode_iter_size_hints_allow_an_immediate_error() {
+	// Six bytes can hold at least two valid u32 encodings, but a malformed
+	// first prefix makes the iterator yield one terminal error and stop.
+	let malformed = [0xF9, 0, 0, 0, 0, 0];
+	assert_eq!(decode_iter::<u32>(&malformed).size_hint(), (1, Some(6)));
+	assert_eq!(vlen::decode_iter_u32(&malformed).size_hint(), (1, Some(6)));
+	assert_eq!(vlen::decode_iter_i32(&malformed).size_hint(), (1, Some(6)));
+}
+
+#[test]
 fn error_implements_display_and_error() {
 	fn assert_error<E: core::error::Error>(_: &E) {}
 	let err = Error::InvalidPrefix { prefix: 0xF9 };
 	assert_error(&err);
 	assert!(!format!("{err}").is_empty());
+}
+
+#[test]
+fn strict_error_displays_context_and_exposes_decode_source() {
+	fn assert_error<E: core::error::Error>(_: &E) {}
+
+	let decode = StrictError::from(Error::InvalidPrefix { prefix: 0xF9 });
+	let non_canonical = StrictError::NonCanonical {
+		encoded_len: 2,
+		canonical_len: 1,
+	};
+	let trailing = StrictError::TrailingBytes {
+		consumed: 1,
+		available: 2,
+	};
+	for error in [decode, non_canonical, trailing] {
+		assert_error(&error);
+		assert!(!format!("{error}").is_empty());
+	}
+	assert!(core::error::Error::source(&decode).is_some());
+	assert!(core::error::Error::source(&non_canonical).is_none());
+	assert!(core::error::Error::source(&trailing).is_none());
+
+	let same_length = StrictError::NonCanonical {
+		encoded_len: 2,
+		canonical_len: 2,
+	};
+	assert!(format!("{same_length}").contains("differs"));
 }
 
 #[cfg(feature = "alloc")]
@@ -623,6 +743,114 @@ fn writer_and_reader_round_trip_mixed_types() {
 }
 
 #[test]
+fn reader_canonical_read_rejects_overlong_input_without_advancing() {
+	let bytes = [0x85, 0x00, 7]; // over-long encoding of 5, followed by 7
+	let mut reader = vlen::Reader::new(&bytes);
+
+	assert_eq!(
+		reader.read_canonical::<u32>(),
+		Err(StrictError::NonCanonical {
+			encoded_len: 2,
+			canonical_len: 1,
+		})
+	);
+	assert_eq!(reader.position(), 0);
+	assert_eq!(reader.remaining_bytes(), &bytes);
+}
+
+#[test]
+fn reader_canonical_read_rejects_same_length_alternate_without_advancing() {
+	let bytes = [0xF0, 0x80, 7]; // alternate two-byte encoding of 128
+	let mut reader = vlen::Reader::new(&bytes);
+
+	assert_eq!(
+		reader.read_canonical::<u32>(),
+		Err(StrictError::NonCanonical {
+			encoded_len: 2,
+			canonical_len: 2,
+		})
+	);
+	assert_eq!(reader.position(), 0);
+	assert_eq!(reader.remaining_bytes(), &bytes);
+}
+
+#[test]
+fn reader_canonical_read_advances_after_success() {
+	let mut reader = vlen::Reader::new(&[5, 6]);
+
+	assert_eq!(reader.read_canonical::<u32>(), Ok(5));
+	assert_eq!(reader.position(), 1);
+	assert_eq!(reader.remaining_bytes(), &[6]);
+}
+
+#[test]
+fn reader_canonical_decode_error_does_not_advance() {
+	let bytes = [0xF9]; // invalid for u32
+	let mut reader = vlen::Reader::new(&bytes);
+
+	assert_eq!(
+		reader.read_canonical::<u32>(),
+		Err(StrictError::Decode(Error::InvalidPrefix { prefix: 0xF9 }))
+	);
+	assert_eq!(reader.position(), 0);
+	assert_eq!(reader.remaining_bytes(), &bytes);
+}
+
+#[test]
+fn reader_canonical_chain_finishes_mixed_message() {
+	let mut bytes = [0u8; 32];
+	let mut writer = vlen::Writer::new(&mut bytes);
+	writer.write(0x4000u32).unwrap();
+	writer.write(-300i64).unwrap();
+	writer.write(1.5f32).unwrap();
+	let len = writer.finish();
+
+	let mut reader = vlen::Reader::new(&bytes[..len]);
+	assert_eq!(reader.read_canonical::<u32>(), Ok(0x4000));
+	assert_eq!(reader.read_canonical::<i64>(), Ok(-300));
+	assert_eq!(reader.read_canonical::<f32>(), Ok(1.5));
+	assert_eq!(reader.finish(), Ok(()));
+}
+
+#[test]
+fn reader_read_error_does_not_advance() {
+	let bytes = [0x80]; // truncated two-byte encoding
+	let mut reader = vlen::Reader::new(&bytes);
+
+	assert_eq!(
+		reader.read::<u32>(),
+		Err(Error::BufferTooSmall {
+			needed: 2,
+			available: 1,
+		})
+	);
+	assert_eq!(reader.position(), 0);
+	assert_eq!(reader.remaining_bytes(), &bytes);
+}
+
+#[test]
+fn reader_finish_rejects_unread_bytes() {
+	let mut reader = vlen::Reader::new(&[5, 6]);
+	assert_eq!(reader.read::<u32>(), Ok(5));
+
+	assert_eq!(
+		reader.finish(),
+		Err(StrictError::TrailingBytes {
+			consumed: 1,
+			available: 2,
+		})
+	);
+}
+
+#[test]
+fn reader_finish_accepts_fully_consumed_input() {
+	let mut reader = vlen::Reader::new(&[5]);
+	assert_eq!(reader.read::<u32>(), Ok(5));
+
+	assert_eq!(reader.finish(), Ok(()));
+}
+
+#[test]
 fn writer_reports_out_of_space() {
 	let mut buf = [0u8; 3];
 	let mut writer = vlen::Writer::new(&mut buf);
@@ -651,4 +879,35 @@ fn encode_append_matches_encode_to_vec() {
 	vlen::bulk_encode_append(&mut bulk, &values);
 	assert_eq!(&bulk[..6], b"header");
 	assert_eq!(&bulk[6..], &vlen::bulk_encode_to_vec(&values)[..]);
+}
+
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy)]
+struct EighteenBytes;
+
+#[cfg(feature = "alloc")]
+impl Encode for EighteenBytes {
+	const MAX_ENCODED_SIZE: usize = 18;
+
+	fn encoded_size(self) -> usize {
+		18
+	}
+
+	fn encode(self, buf: &mut [u8]) -> vlen::Result<usize> {
+		let available = buf.len();
+		let dst = buf.get_mut(..18).ok_or(Error::BufferTooSmall {
+			needed: 18,
+			available,
+		})?;
+		dst.copy_from_slice(b"eighteen-byte-data");
+		Ok(18)
+	}
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn encode_append_honors_downstream_encoded_sizes() {
+	let mut bytes = Vec::from(&b"prefix"[..]);
+	vlen::encode_append(&mut bytes, EighteenBytes);
+	assert_eq!(&bytes[6..], b"eighteen-byte-data");
 }

@@ -609,7 +609,10 @@ fn test_buffer_overflow_handling() {
 fn test_invalid_prefix_handling() {
 	arbtest(|_u| {
 		let buf = [0xFFu8; 5];
-		let _result = decode_u32(&buf);
+		assert_eq!(
+			u32::decode(&buf),
+			Err(Error::InvalidPrefix { prefix: 0xFF })
+		);
 		Ok(())
 	});
 }
@@ -622,11 +625,115 @@ fn test_truncated_data_handling() {
 		let encoded_len = encode_u32(&mut buf, value);
 
 		if encoded_len > 1 {
-			let mut truncated_buf = [0u8; 5];
-			truncated_buf[..encoded_len - 1]
-				.copy_from_slice(&buf[..encoded_len - 1]);
-			let _result = decode_u32(&truncated_buf);
+			let truncated = &buf[..encoded_len - 1];
+			assert_eq!(
+				u32::decode(truncated),
+				Err(Error::BufferTooSmall {
+					needed: encoded_len,
+					available: encoded_len - 1,
+				})
+			);
 		}
+		Ok(())
+	});
+}
+
+#[test]
+fn test_arbitrary_bytes_respect_checked_decode_contracts() {
+	arbtest(|u| {
+		let storage = u.arbitrary::<[u8; 64]>()?;
+		let len = usize::from(u.arbitrary::<u8>()?) % (storage.len() + 1);
+		let bytes = &storage[..len];
+
+		macro_rules! check {
+			($t:ty) => {
+				if let Ok((_, consumed)) = <$t>::decode(bytes) {
+					assert!(
+						consumed >= 1,
+						"{} consumed {consumed} bytes from {bytes:?}",
+						stringify!($t)
+					);
+					assert!(
+						consumed <= bytes.len(),
+						"{} consumed {consumed} of {} bytes from {bytes:?}",
+						stringify!($t),
+						bytes.len()
+					);
+					assert!(
+						consumed <= <$t as Decode>::MAX_ENCODED_SIZE,
+						"{} consumed {consumed} bytes (maximum {}) from {bytes:?}",
+						stringify!($t),
+						<$t as Decode>::MAX_ENCODED_SIZE
+					);
+				}
+			};
+		}
+
+		check!(u8);
+		check!(u16);
+		check!(u32);
+		check!(u64);
+		check!(u128);
+		check!(usize);
+		check!(i8);
+		check!(i16);
+		check!(i32);
+		check!(i64);
+		check!(i128);
+		check!(isize);
+		check!(f32);
+		check!(f64);
+
+		let _ = decode_exact::<u128>(bytes);
+		let _ = decode_canonical::<u128>(bytes);
+		let _ = decode_strict::<u128>(bytes);
+		Ok(())
+	});
+}
+
+#[test]
+fn test_specialized_decoders_match_generic_on_arbitrary_bytes() {
+	arbtest(|u| {
+		let storage = u.arbitrary::<[u8; 64]>()?;
+		let len = usize::from(u.arbitrary::<u8>()?) % (storage.len() + 1);
+		let bytes = &storage[..len];
+		let count = usize::from(u.arbitrary::<u8>()?) % 17;
+
+		macro_rules! compare_bulk {
+			($t:ty, $specialized:path) => {{
+				let mut generic = [0 as $t; 16];
+				let mut specialized = [0 as $t; 16];
+				let generic_result = bulk_decode(bytes, &mut generic[..count]);
+				let specialized_result =
+					$specialized(bytes, &mut specialized[..count]);
+				assert_eq!(specialized_result, generic_result);
+				if generic_result.is_ok() {
+					assert_eq!(specialized[..count], generic[..count]);
+				}
+			}};
+		}
+
+		compare_bulk!(u32, bulk_decode_u32);
+		compare_bulk!(u64, bulk_decode_u64);
+		compare_bulk!(i32, bulk_decode_i32);
+		compare_bulk!(i64, bulk_decode_i64);
+
+		assert_eq!(
+			decode_iter::<u32>(bytes).collect::<Vec<_>>(),
+			decode_iter_u32(bytes).collect::<Vec<_>>()
+		);
+		assert_eq!(
+			decode_iter::<u64>(bytes).collect::<Vec<_>>(),
+			decode_iter_u64(bytes).collect::<Vec<_>>()
+		);
+		assert_eq!(
+			decode_iter::<i32>(bytes).collect::<Vec<_>>(),
+			decode_iter_i32(bytes).collect::<Vec<_>>()
+		);
+		assert_eq!(
+			decode_iter::<i64>(bytes).collect::<Vec<_>>(),
+			decode_iter_i64(bytes).collect::<Vec<_>>()
+		);
 		Ok(())
 	});
 }

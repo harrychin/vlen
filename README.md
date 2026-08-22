@@ -13,6 +13,19 @@ let (value, _) = u32::decode(&buf[..len])?;    // 12345
 # Ok::<(), vlen::Error>(())
 ```
 
+## Choosing an API
+
+| Need | Use |
+|------|-----|
+| One checked value | `Encode`/`Decode` or `encode`/`decode` |
+| Canonical first value | `decode_canonical` |
+| Exact whole input | `decode_exact`; use `decode_strict` when it must also be canonical |
+| A mixed-type message | `Writer` and `Reader`; add `read_canonical` and `finish` for strict fields and framing |
+| A homogeneous batch | `bulk_encode`/`bulk_decode`, or the specialized `u32`, `u64`, `i32`, and `i64` variants |
+| Lazy stream decoding | `decode_iter`, or a specialized iterator such as `decode_iter_u32` |
+| An owned buffer (`alloc`) | `encode_to_vec`, `encode_append`, and the bulk `Vec` helpers |
+| Compile-time or trusted fixed arrays | `encode_u32`/`decode_u32` and their typed counterparts |
+
 ## Why vlen
 
 **It decodes faster than every varint we could find to compare
@@ -50,6 +63,23 @@ widened to `u64`.
 Compression matches LEB128 byte-for-byte below 2^28 — where most
 varint data lives — and caps at 9 bytes for `u64`, where LEB128 needs
 up to 10.
+
+**Strict when the protocol needs one representation.** The ordinary
+decoder deliberately accepts over-long encodings, which lets a format
+reserve a fixed-width slot before its value is known. For signed or hashed
+data, or any field that must consume its entire slice,
+`decode_canonical`, `decode_exact`, and `decode_strict` add allocation-
+free validation without changing the permissive codec:
+
+```rust
+let reserved = [0x85, 0x00]; // the value 5 in an over-long slot
+assert_eq!(vlen::decode::<u32>(&reserved)?, (5, 2));
+assert!(matches!(
+    vlen::decode_strict::<u32>(&reserved),
+    Err(vlen::StrictError::NonCanonical { .. })
+));
+# Ok::<(), vlen::Error>(())
+```
 
 **It is safe to point at untrusted bytes.** Default builds contain no
 unsafe code (`#![deny(unsafe_code)]`); the opt-in `simd` feature adds
@@ -114,9 +144,10 @@ writer.write(-42i64)?;
 let len = writer.finish();
 
 let mut reader = vlen::Reader::new(&buf[..len]);
-assert_eq!(reader.read::<u32>()?, 7);
-assert_eq!(reader.read::<i64>()?, -42);
-# Ok::<(), vlen::Error>(())
+assert_eq!(reader.read_canonical::<u32>()?, 7);
+assert_eq!(reader.read_canonical::<i64>()?, -42);
+reader.finish()?;
+# Ok::<(), vlen::StrictError>(())
 ```
 
 **Serde that respects your format.** With the `serde` feature,
@@ -130,13 +161,14 @@ errors.
 
 | Feature | Adds |
 |---------|------|
-| `alloc` | `Vec` conveniences: `encode_to_vec`, `bulk_encode_to_vec`, `bulk_decode_values` |
+| `alloc` | `Vec` conveniences: `encode_to_vec`/`encode_append`, `bulk_encode_to_vec`/`bulk_encode_append`, and `bulk_decode_values` |
 | `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
 | `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs; a handful of audited load/store unsafe blocks) |
 | `full`  | Everything above |
 
-MSRV: **1.85**. Tested in CI on x86_64 and aarch64, stable and MSRV,
-with clippy, rustfmt, and `no_std` builds gating every change.
+MSRV: **1.85**. Tested in CI on x86_64, aarch64, big-endian s390x,
+and wasm32, stable and MSRV, with clippy, rustfmt, fuzz smoke tests,
+semver checks, and `no_std` builds gating every change.
 
 ## When something else fits better
 
