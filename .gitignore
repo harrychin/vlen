@@ -3,3 +3,5 @@
 /Cargo.lock
 /target
 /.worktrees
+/ci/size-check/target
+/ci/size-check/Cargo.lock

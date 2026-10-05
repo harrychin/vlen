@@ -21,6 +21,7 @@ let (value, _) = u32::decode(&buf[..len])?;    // 12345
 | Canonical first value | `decode_canonical` |
 | Exact whole input | `decode_exact`; use `decode_strict` when it must also be canonical |
 | A mixed-type message | `Writer` and `Reader`; add `read_canonical` and `finish` for strict fields and framing |
+| A slot filled once its value is known | `encode_padded`, or `Writer::reserve` and `Writer::fill` |
 | A homogeneous batch | `bulk_encode`/`bulk_decode`, or the specialized `u32`, `u64`, `i32`, and `i64` variants |
 | Lazy stream decoding | `decode_iter`, or a specialized iterator such as `decode_iter_u32` |
 | An owned buffer (`alloc`) | `encode_to_vec`, `encode_append`, and the bulk `Vec` helpers |
@@ -55,10 +56,10 @@ and the chart all use vlen's validating API. The single-value rows use
 its infallible array API; through the validating slice API — the same
 work the other crates always do — vlen measures 0.77 ns decode /
 1.58 ns encode, level with prost's validating decode (0.80 ns).
-stream-vbyte runs its scalar kernels (its SSE4.1 decoder is faster on
-x86_64) and is a control-stream format rather than a self-delimiting
-varint; `prost` and `vint64` are 64-bit codecs fed the same values
-widened to `u64`.
+stream-vbyte runs its scalar kernels and is a control-stream format
+rather than a self-delimiting varint (its x86 SIMD kernels, below, are
+much faster); `prost` and `vint64` are 64-bit codecs fed the same
+values widened to `u64`.
 
 Compression matches LEB128 byte-for-byte below 2^28 — where most
 varint data lives — and caps at 9 bytes for `u64`, where LEB128 needs
@@ -161,9 +162,9 @@ errors.
 
 | Feature | Adds |
 |---------|------|
-| `alloc` | `Vec` conveniences: `encode_to_vec`/`encode_append`, `bulk_encode_to_vec`/`bulk_encode_append`, and `bulk_decode_values` |
+| `alloc` | `Vec` conveniences: `encode_to_vec`/`encode_append`, `bulk_encode_to_vec`/`bulk_encode_append`, and `bulk_decode_values` (run-accelerated for `u32`, `u64`, `i32`, and `i64`) |
 | `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
-| `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs; a handful of audited load/store unsafe blocks) |
+| `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs), plus an SSSE3 kernel for three-byte runs (3-5x) in builds targeting x86-64-v2 or newer; a handful of audited load/store unsafe blocks |
 | `full`  | Everything above |
 
 MSRV: **1.85**. Tested in CI on x86_64, aarch64, big-endian s390x,
@@ -174,10 +175,14 @@ semver checks, and `no_std` builds gating every change.
 
 If your workload is purely columnar bulk `u32` compression — no
 streaming, no self-delimiting values — a control-stream format like
-`stream-vbyte` encodes unpredictably interleaved sizes faster (its
+`stream-vbyte` handles unpredictably interleaved sizes faster (its
 lengths live in a separate control stream, so per-value size changes
-cost it nothing). vlen is built for the general case: self-delimiting
-streams you can read value by value.
+cost it nothing). On x86_64 its SIMD kernels (SSSE3 decode, SSE4.1
+encode; nightly-only in stream-vbyte 0.4) decoded 1,024 random-size
+`u32` values about 6x faster than vlen and encoded them about 2x
+faster in our measurement, while vlen stayed ahead on small values.
+vlen is built for the general case: self-delimiting streams you can
+read value by value.
 
 ## Learn more
 

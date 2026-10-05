@@ -58,7 +58,9 @@ byte sequence that is unnecessarily long:
 
 The `encode_*` functions never generate over-long encodings, but the
 `decode_*` functions accept them. This allows a `vlen` slot to be
-reserved in a buffer before the value to be written is known.
+reserved in a buffer before the value to be written is known;
+`encode_padded` (or `Writer::reserve` and `Writer::fill`) writes a
+value into such a slot using exactly its width.
 Applications that require a single canonical encoding for any given
 value can use `decode_canonical`; `decode_exact` separately requires
 the first value to consume the whole slice, and `decode_strict`
@@ -89,6 +91,11 @@ branchy structure is a measured choice, not a default. Size
 calculations (`encoded_size_*`, `encoded_len`) have no such chain and
 are branch-free, so summing sizes over a slice vectorizes.
 
+Encoding has no chain through memory either: a value's output offset
+waits only on the previous length's addition. So the specialized bulk
+encoders encode windows of mixed sizes branch-free (below), and only
+single-value and generic encoding stay branchy.
+
 ### Bulk run detection
 
 The specialized bulk functions detect runs of equal-length encodings.
@@ -99,13 +106,30 @@ per-value length arithmetic entirely:
   a `u64` word); two-byte runs reassemble four values inside 16-bit
   lanes at once.
 - Three- to five-byte encode runs emit one class-known full-width
-  store per value; four-byte decode runs use 32-bit lanes, and
-  binary-length-prefix decode runs (five to nine bytes) use pairs of
-  plain masked loads.
-- Three-byte decode runs deliberately stay on the branchy scalar path,
-  which measured faster than their SWAR lane math.
+  store per value, and `u64` six- to nine-byte encode runs a prefix
+  byte plus one eight-byte store; four-byte decode runs use 32-bit
+  lanes, and binary-length-prefix decode runs (five to nine bytes) use
+  pairs of plain masked loads.
+- Three-byte decode runs stay on the branchy scalar path, which
+  measured faster than their SWAR lane math, unless the SSSE3 kernel
+  below is compiled in.
 - The window checks are gated so that streams with no runs pay only a
-  compare or two per eight values.
+  compare or two per eight values. The signed encoders skip two of
+  those gates, a test of the window's first and last sizes and a
+  screen of its ends for the one-byte class: on delta streams both
+  ends are small about as often as not, so the gates mispredicted, and
+  dropping them encodes delta streams up to 1.9x faster. Unsigned
+  windows keep the screen, which makes their runs up to 1.4x faster.
+- Encode windows that are not runs go branch-free: a table indexed by
+  each value's leading zeros gives its layout (prefix bits, low-bit
+  mask, shift, and length), the word `prefix | (v & low) | ((v >>
+  shift) << 8)` is stored whole at the running offset, and the offset
+  advances by the length. Interleaved sizes then cost no
+  mispredictions: random-size `u32` streams encode 1.37x faster at
+  x86-64-v1 and 1.59x at v3 than with the per-value fallback. BMI2's
+  `pdep` builds the same word in one instruction and measured ~20%
+  faster at v3, but it is microcoded and very slow on AMD Zen 1 and 2,
+  which also qualify as x86-64-v3, so the table form is used.
 
 ### SIMD: where it helps and where it cannot
 
@@ -130,23 +154,101 @@ references, and the full test suite runs with the feature on and off,
 on both architectures, in CI. Default builds remain free of unsafe
 code.
 
+#### x86 beyond SSE2
+
+Builds that target x86-64-v2 or newer (`-C target-cpu=x86-64-v2`,
+`x86-64-v3`, `native`) also get an SSSE3 kernel for three-byte decode
+runs: one `pshufb` per sixteen bytes spreads each encoding into its
+own 32-bit lane, a single compare checks all eight prefixes, and two
+shifts rebuild the values. It is selected by `cfg(target_feature)`, so
+there is still no runtime detection — a binary built for it requires
+it — and an x86-64-v1 build compiles exactly the code it did before.
+Measured on the same VM, three-byte runs decode 4.6x faster at
+x86-64-v2 and 3.2-3.7x at x86-64-v3, with other distributions
+unchanged at v2. At v3, specialized decoding of interleaved sizes
+measured 9-23% slower with the kernel present, from code layout
+rather than work done (the kernel never runs there); the generic
+decoder is the faster choice for such data either way.
+
+Wider kernels were measured and not kept. With eight-value windows, an
+AVX2 kernel can only help four-byte runs (eight per 32-byte step
+instead of four per sixteen): inlined, it decoded them 1.8x faster but
+slowed interleaved streams by about 24%; kept out of line, the call
+cost erased the gain. AVX-512 has no lane width left to fill in an
+eight-value window. Both levels still build and pass the full suite,
+and CI tests x86-64-v2, v3, and (where the runner has AVX-512) v4.
+LLVM's own autovectorization of the encode paths picks up SSE4.1 and
+AVX2 without explicit kernels.
+
 ### Specialized vs generic bulk functions
 
-Indicative numbers for 1,024 values (Apple M-series, `--quick`
-criterion run — measure on your own hardware):
+Indicative numbers for 1,024 values (x86_64, 4-vCPU cloud VM; each
+pair timed in one binary, best of 40 batches — measure on your own
+hardware). "All n-byte" draws values uniformly across that size class:
 
-| Distribution    | specialized vs generic encode | specialized vs generic decode |
-|-----------------|------------------------------:|------------------------------:|
-| all one-byte    | **~4x faster**                | **~4x faster**                |
-| all two-byte    | **~1.2x faster**              | **~3.7x faster**              |
-| all three-byte  | **~1.5x faster**              | ~1.2x slower                  |
-| all four-byte   | **~1.7x faster**              | **~2.4x faster**              |
-| all five-byte   | **~3.5x faster**              | **~2x faster**                |
-| mixed / random  | ~1.2-1.4x slower              | ~1.1-1.4x slower              |
+| Distribution                    | specialized vs generic encode | specialized vs generic decode |
+|---------------------------------|------------------------------:|------------------------------:|
+| all one-byte                    | **~1.7x faster**              | **~2.5x faster**              |
+| all two-byte                    | **~4x faster**                | **~2.5x faster**              |
+| all three-byte                  | **~1.4x faster**              | about even                    |
+| all four-byte                   | **~2x faster**                | **~2.3x faster**              |
+| all five-byte                   | **~2.4x faster**              | **~1.3x faster**              |
+| `u64`, all six- to nine-byte    | **~2-2.4x faster**            | **~1.3x faster**              |
+| mixed sizes, repeating pattern  | ~1.1-1.4x faster              | ~1.1x faster                  |
+| random sizes                    | ~1.1-1.2x faster              | ~1.2-1.35x slower             |
+| `u64`, random six- to nine-byte | about even to ~1.5x faster    | ~1.2x slower                  |
+| signed deltas, 1 in 64 a spike  | **~1.2-1.9x faster**          | **~1.6-2.2x faster**          |
+| signed deltas, 1 in 4 a spike   | ~1.1-1.5x slower              | ~1.15x slower                 |
 
 Prefer the specialized functions whenever the data has runs of
-similarly-sized values; only adversarially interleaved sizes favor the
-generic functions.
+similarly-sized values; only randomly interleaved sizes favor the
+generic decoders, and only modestly. A window that holds no run
+decodes its eight values with the scalar decoder, written out in
+sequence: a loop over them mispredicted its exit once per window when
+sizes were unpredictable, which cost the specialized decoders up to
+1.45x on interleaved sizes (1.1-1.15x on random ones). The run
+iterators buffer eight such values at a time wherever eight must
+exist, and now beat the generic `decode_iter` on every distribution
+measured. The remaining gap on random sizes is the run check itself,
+because a decoder cannot know where the next value starts without
+reading the current one's prefix. Ways of closing it that were
+measured and dropped, because each bought mixed-data speed with run
+speed or bought nothing:
+
+- a branch-free pre-test of every decode run class (random sizes ~8%
+  faster, runs 12-19% slower);
+- rationing run checks after consecutive misses (random sizes ~15%
+  faster to encode and up to ~8% to decode, runs 12-26% slower; in the
+  iterators it also skipped the runs that follow a spike in a delta
+  stream);
+- whole-word class tests in place of the first-byte dispatch (no gain);
+- before the branch-free windows, one table-driven encode gate for all
+  classes (runs 21-42% slower) and a min/max test over the window (runs
+  1.4-2.5x slower).
+
+The `alloc` `Vec` helpers take the specialized paths for `u32`, `u64`,
+`i32`, and `i64`.
+
+These tables time 1,024 values, and a benchmark that repeats the same
+1,024 values lets the branch predictor learn their sizes: random
+sizes there cost about 1.5 ns per value, mispredicting far less than
+a real stream would. Over 65,536 values with sizes drawn from a strong
+generator, which it cannot learn, generic encoding and decoding both
+cost 6-8 ns per value. The branch-free specialized encoder stays near
+1.8 ns there, about 3.7x faster than generic, and the specialized
+decoders run even with generic (0.96-1.04x). Signed deltas with a
+spike in one value of four flip from the losses above to 2-3x faster
+encoding and even decoding. The one row that gets worse is randomly
+interleaved six- to nine-byte `u64` encoding (0.8-1.25x): the generic
+encoder writes those binary length-prefix forms with almost no
+branching, so it has no mispredictions to lose. The criterion benches
+and the README comparison use 1,024 values, so their random-size rows
+describe the learned case.
+
+The criterion benches in `benches/bulk.rs` are sensitive to code
+layout on the generic side: the same generic encode has measured
+anywhere from 1.3 to 2.2 µs there as unrelated code changed, so
+compare both sides within one build.
 
 ### Build configuration
 

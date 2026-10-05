@@ -1,0 +1,26 @@
+# Measures the Cortex-M code size of the core codecs (see ci/size-check.sh).
+[package]
+name = "vlen-size-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+vlen = { path = "../..", default-features = false }
+
+[features]
+# Exactly one of these selects the API surface to measure.
+unchecked = []
+checked = []
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[workspace]

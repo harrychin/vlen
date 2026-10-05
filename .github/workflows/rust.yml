@@ -43,6 +43,51 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
+  x86-levels:
+    name: x86-64 v2/v3/v4 (SSSE3 kernel, AVX2/AVX-512 codegen)
+    runs-on: ubuntu-latest
+    # An explicit --target keeps RUSTFLAGS off build scripts and proc
+    # macros, which run on the runner and would otherwise be compiled
+    # for a CPU level it may not have.
+    env:
+      HOST: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test at x86-64-v2 (SSSE3 kernel)
+        run: cargo test --all-features --target $HOST
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=x86-64-v2
+      - name: Test at x86-64-v3 (AVX2)
+        run: cargo test --all-features --target $HOST
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=x86-64-v3
+      - name: Test at x86-64-v4 where the runner has AVX-512
+        run: |
+          if grep -q avx512bw /proc/cpuinfo; then
+            cargo test --all-features --target $HOST
+          else
+            echo "No AVX-512 on this runner; building only."
+            cargo build --all-features --all-targets --target $HOST
+          fi
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=x86-64-v4
+
+  miri:
+    name: Miri (portable paths and every x86 kernel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Portable paths
+        run: cargo miri test --no-default-features --test contract_tests --test tests
+      - name: SSE2 and SSSE3 kernels
+        run: cargo miri test --all-features --test contract_tests --test tests
+        env:
+          RUSTFLAGS: -C target-feature=+ssse3
+
   msrv:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
@@ -64,6 +109,18 @@ jobs:
         run: cargo build --target thumbv7em-none-eabi --no-default-features
       - name: Build with all features
         run: cargo build --target thumbv7em-none-eabi --features full
+
+  size:
+    name: Code size (thumbv7em, opt-level z)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+          components: llvm-tools
+      - name: Check code size, memcpy imports, and panic paths
+        run: ci/size-check.sh
 
   docs:
     name: Docs (docs.rs configuration)
@@ -118,6 +175,8 @@ jobs:
         run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Fuzz checked decoders
         run: cargo fuzz run decode_arbitrary -- -max_total_time=10
+      - name: Fuzz encoders and padded slots
+        run: cargo fuzz run encode_arbitrary -- -max_total_time=10
       - name: Fuzz serde visitors
         run: cargo fuzz run serde_arbitrary -- -max_total_time=10
 

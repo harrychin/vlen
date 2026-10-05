@@ -199,3 +199,42 @@ fn with_modules_annotate_plain_fields() {
 	let wrapper_json = serde_json::to_string(&VlenU32(123456789)).unwrap();
 	assert!(json.contains(wrapper_json.trim_matches('"')));
 }
+
+/// A compact deserializer that hands `deserialize_bytes` a sequence of
+/// `u8`, as some binary formats do, to reach the wrappers' `visit_seq`.
+struct ByteSeq<'a>(&'a [u8]);
+
+impl<'de> serde::Deserializer<'de> for ByteSeq<'_> {
+	type Error = serde::de::value::Error;
+
+	fn deserialize_any<V: serde::de::Visitor<'de>>(
+		self,
+		visitor: V,
+	) -> Result<V::Value, Self::Error> {
+		visitor.visit_seq(serde::de::value::SeqDeserializer::new(
+			self.0.iter().copied(),
+		))
+	}
+
+	fn is_human_readable(&self) -> bool {
+		false
+	}
+
+	serde::forward_to_deserialize_any! {
+		bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+		bytes byte_buf option unit unit_struct newtype_struct seq tuple
+		tuple_struct map struct enum identifier ignored_any
+	}
+}
+
+#[test]
+fn wrappers_accept_bytes_as_a_sequence() {
+	assert_eq!(
+		VlenU32::deserialize(ByteSeq(&[0x85, 0x01])),
+		Ok(VlenU32(69))
+	);
+	assert_eq!(VlenI64::deserialize(ByteSeq(&[0x03])), Ok(VlenI64(-2)));
+	// Trailing bytes and over-long sequences are rejected.
+	assert!(VlenU32::deserialize(ByteSeq(&[0x05, 0x00])).is_err());
+	assert!(VlenU16::deserialize(ByteSeq(&[0xC0, 0, 0, 0])).is_err());
+}

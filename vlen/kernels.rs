@@ -6,7 +6,10 @@
 //!
 //! - Every intrinsic used is part of the target's *baseline* feature
 //!   set — NEON on aarch64, SSE2 on x86_64 — so no runtime detection
-//!   or `#[target_feature]` preconditions apply.
+//!   or `#[target_feature]` preconditions apply. The exception is the
+//!   x86_64 SSSE3 kernel, which compiles only when the build itself
+//!   enables SSSE3 (`-C target-cpu=x86-64-v2` and up, or `native`), so
+//!   it needs no detection either: a binary built for it requires it.
 //! - Loads and stores take pointers derived from array references,
 //!   which guarantee validity for exactly the accessed widths.
 //!
@@ -77,6 +80,56 @@ pub(crate) fn four_byte_lanes(bytes: &[u8; 16], lanes: &mut [u32; 4]) {
 		);
 		_mm_storeu_si128(lanes.as_mut_ptr().cast(), value);
 	}
+}
+
+/// Reassembles eight three-byte encodings (24 bytes) into eight 32-bit
+/// value lanes, returning `false` (with `lanes` unspecified) unless every
+/// first byte is a three-byte prefix, `110xxxxx`.
+#[cfg(all(target_arch = "x86_64", target_feature = "ssse3"))]
+#[inline(always)]
+pub(crate) fn three_byte_lanes(bytes: &[u8; 24], lanes: &mut [u32; 8]) -> bool {
+	use core::arch::x86_64::*;
+	// SAFETY: SSSE3 is statically enabled (this function only compiles
+	// under cfg(target_feature = "ssse3")) and every other intrinsic is
+	// SSE2. The loads read bytes 0..16 and 8..24 of the 24-byte array and
+	// the stores write lanes 0..4 and 4..8 of the eight-lane array.
+	unsafe {
+		// Spread each encoding into its own 32-bit lane, first byte
+		// lowest, with a zero byte on top.
+		let spread_lo =
+			_mm_setr_epi8(0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1);
+		let spread_hi = _mm_setr_epi8(
+			4, 5, 6, -1, 7, 8, 9, -1, 10, 11, 12, -1, 13, 14, 15, -1,
+		);
+		let a =
+			_mm_shuffle_epi8(_mm_loadu_si128(bytes.as_ptr().cast()), spread_lo);
+		let b = _mm_shuffle_epi8(
+			_mm_loadu_si128(bytes.as_ptr().add(8).cast()),
+			spread_hi,
+		);
+		let prefix_bits = _mm_set1_epi32(0xE0);
+		let three_byte = _mm_set1_epi32(0xC0);
+		let valid = _mm_and_si128(
+			_mm_cmpeq_epi32(_mm_and_si128(a, prefix_bits), three_byte),
+			_mm_cmpeq_epi32(_mm_and_si128(b, prefix_bits), three_byte),
+		);
+		if _mm_movemask_epi8(valid) != 0xFFFF {
+			return false;
+		}
+		// value = (lane >> 8) << 5 | (lane & 0x1F), per 32-bit lane.
+		let low = _mm_set1_epi32(0x1F);
+		let va = _mm_or_si128(
+			_mm_slli_epi32::<5>(_mm_srli_epi32::<8>(a)),
+			_mm_and_si128(a, low),
+		);
+		let vb = _mm_or_si128(
+			_mm_slli_epi32::<5>(_mm_srli_epi32::<8>(b)),
+			_mm_and_si128(b, low),
+		);
+		_mm_storeu_si128(lanes.as_mut_ptr().cast(), va);
+		_mm_storeu_si128(lanes.as_mut_ptr().add(4).cast(), vb);
+	}
+	true
 }
 
 #[cfg(target_arch = "aarch64")]

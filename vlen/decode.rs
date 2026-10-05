@@ -317,6 +317,19 @@ pub trait Decode: Sized {
 	/// longer than this type can produce, and [`Error::Overflow`] if
 	/// the encoded value exceeds the type's range.
 	fn decode(buf: &[u8]) -> Result<(Self, usize)>;
+
+	/// Decodes every value in `buf` into a vector, exactly as
+	/// collecting [`decode_iter`](crate::decode_iter) does.
+	///
+	/// [`bulk_decode_values`](crate::bulk_decode_values) decodes through
+	/// this, so a type with a faster stream decoder can supply it: the
+	/// built-in `u32`, `u64`, `i32`, and `i64` implementations use their
+	/// run-accelerated iterators. An override must accept the same input
+	/// and return the same values or error.
+	#[cfg(feature = "alloc")]
+	fn decode_to_vec(buf: &[u8]) -> Result<alloc::vec::Vec<Self>> {
+		crate::bulk::decode_iter(buf).collect()
+	}
 }
 
 /// Generates the out-of-line path for slices shorter than the type's
@@ -362,7 +375,7 @@ macro_rules! decode_short_fn {
 /// `$max_prefix` (omitted for u128, whose every prefix is valid).
 macro_rules! impl_decode {
 	($t:ty, $size:expr, $decode_fn:ident, $short_fn:ident
-		$(, $max_prefix:literal)?) => {
+		$(, $max_prefix:literal)? $(, to_vec = $to_vec_fn:path)?) => {
 		decode_short_fn!($short_fn, $t, $size, $decode_fn);
 
 		impl Decode for $t {
@@ -385,12 +398,33 @@ macro_rules! impl_decode {
 					$short_fn(buf)
 				}
 			}
+
+			$(
+				#[cfg(feature = "alloc")]
+				fn decode_to_vec(buf: &[u8]) -> Result<alloc::vec::Vec<Self>> {
+					$to_vec_fn(buf)
+				}
+			)?
 		}
 	};
 }
 
-impl_decode!(u32, 5, decode_u32, decode_u32_short, 0xF3);
-impl_decode!(u64, 9, decode_u64, decode_u64_short, 0xF7);
+impl_decode!(
+	u32,
+	5,
+	decode_u32,
+	decode_u32_short,
+	0xF3,
+	to_vec = crate::bulk::decode_to_vec_u32
+);
+impl_decode!(
+	u64,
+	9,
+	decode_u64,
+	decode_u64_short,
+	0xF7,
+	to_vec = crate::bulk::decode_to_vec_u64
+);
 impl_decode!(u128, 17, decode_u128, decode_u128_short);
 
 decode_short_fn!(decode_u16_short, u32, 3, decode_u16_wide);
@@ -536,7 +570,7 @@ const fn decode_u16_wide(buf: &[u8; 3]) -> (u32, usize) {
 /// Implements [`Decode`] for a signed type on top of its unsigned
 /// counterpart, inheriting all of its validation.
 macro_rules! impl_decode_signed {
-	($it:ident, $ut:ident, $size:expr) => {
+	($it:ident, $ut:ident, $size:expr $(, to_vec = $to_vec_fn:path)?) => {
 		impl Decode for $it {
 			const MAX_ENCODED_SIZE: usize = $size;
 
@@ -545,14 +579,21 @@ macro_rules! impl_decode_signed {
 				let (zigzag, len) = <$ut as Decode>::decode(buf)?;
 				Ok((unzigzag!($it, zigzag), len))
 			}
+
+			$(
+				#[cfg(feature = "alloc")]
+				fn decode_to_vec(buf: &[u8]) -> Result<alloc::vec::Vec<Self>> {
+					$to_vec_fn(buf)
+				}
+			)?
 		}
 	};
 }
 
 impl_decode_signed!(i8, u8, 2);
 impl_decode_signed!(i16, u16, 3);
-impl_decode_signed!(i32, u32, 5);
-impl_decode_signed!(i64, u64, 9);
+impl_decode_signed!(i32, u32, 5, to_vec = crate::bulk::decode_to_vec_i32);
+impl_decode_signed!(i64, u64, 9, to_vec = crate::bulk::decode_to_vec_i64);
 impl_decode_signed!(i128, u128, 17);
 
 /// Implements [`Decode`] for a floating-point type on top of its

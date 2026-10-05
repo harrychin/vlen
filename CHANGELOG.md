@@ -1,5 +1,103 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `encode_padded`: writes a value into exactly `N` bytes, padding it to
+  an over-long encoding when its canonical form is shorter, so a slot
+  reserved before its value is known (a length prefix written after
+  its payload) can be filled without hand-rolling the wire format.
+  Every decoder for the type accepts the result; canonical decoding
+  rejects it unless `N` is the canonical length. Widths beyond what
+  the type can decode are a compile-time error.
+- `Writer::reserve` and `Writer::fill`, with the `Slot` handle they
+  share: reserve a zeroed fixed-width slot in a cursor and fill it
+  later.
+- With the `simd` feature, an SSSE3 kernel for three-byte decode runs
+  in builds targeting x86-64-v2 or newer (`-C target-cpu=x86-64-v2`,
+  `x86-64-v3`, `native`): selected at compile time, so x86-64-v1
+  builds are unchanged. Three-byte runs decode 4.6x faster at v2 and
+  3.2-3.7x at v3; see DESIGN.md for the v3 layout caveat on
+  interleaved sizes and for the AVX2 and AVX-512 kernels that were
+  measured and not kept.
+- CI coverage: Miri over the portable paths and every x86 kernel, the
+  suite at x86-64-v2, v3, and (where available) v4, a Cortex-M
+  code-size check (`ci/size-check.sh`: no `memcpy` import, no panic
+  paths, a byte budget per API surface), and an `encode_arbitrary`
+  fuzz target covering the specialized encoders, the `Vec` helpers,
+  `encode_padded`, and `Writer` slots.
+- `Encode::encode_slice` and (with `alloc`) `Decode::decode_to_vec`:
+  provided methods the generic `Vec` helpers go through, so a type
+  with a faster bulk codec can supply it. Their defaults are
+  `bulk_encode` and collecting `decode_iter`; the built-in `u32`,
+  `u64`, `i32`, and `i64` implementations use the run fast paths.
+
+### Changed
+
+- The specialized bulk encoders (`bulk_encode_u32`, `_u64`, `_i32`,
+  `_i64`) now detect every two- to five-byte run. The size-class
+  check or-reduced the window before comparing, which is only exact
+  for power-of-two spans: it rejected ~97% of windows whose values
+  are spread across a class, so on such data the specialized
+  encoders ran slower than the generic `bulk_encode`. Uniformly
+  distributed same-size `u32` streams now encode 2.1-4.4x faster
+  (two-byte 1.84 -> 0.49 µs per 1,024 values, five-byte 2.88 ->
+  0.65 µs on x86_64); clustered runs are 1.2-1.3x faster at two and
+  three bytes and ~10% slower at four. Output bytes are unchanged.
+- `bulk_encode_u64` and `bulk_encode_i64` now have encode runs for the
+  six- to nine-byte binary length-prefix classes (values from 2^32),
+  which decoding already had. Same-size streams of large values -
+  nanosecond timestamps, 64-bit IDs and hashes - encode 3.6-4.4x
+  faster (nine-byte 3.35 -> 0.79 µs per 1,024 values on x86_64),
+  where the specialized encoder previously trailed the generic one
+  by ~1.4x; mixed wide sizes gain ~1.2x. Mixed-size `u64` streams of
+  values below 2^28 measure ~9% slower, apparently from code layout:
+  no window there reaches the new path. `u32` and `i32` are
+  unaffected.
+- The specialized bulk encoders now encode windows that are not runs
+  branch-free: each value's layout comes from a table indexed by its
+  leading zeros, its word is stored whole at the running offset, and
+  the offset advances by its length, so interleaved sizes no longer
+  mispredict. On x86_64, random-size `u32` streams encode 1.37x faster
+  at x86-64-v1 and 1.59x at v3, periodic mixes 1.33x and 1.75x,
+  interleaved wide `u64` sizes 1.34x and 1.59x, and small random `u64`
+  values 1.2x; runs are unchanged within noise. The specialized `u32`
+  encoders now match or beat the generic encoder on every distribution
+  measured.
+- The signed bulk encoders (`bulk_encode_i32`, `_i64`) no longer test
+  each window's first and last sizes, or screen its ends for the
+  one-byte class, before looking for a run: on delta streams both
+  mispredicted. Smooth delta streams encode 1.3-1.9x faster and choppy
+  ones up to 1.7x. The unsigned encoders keep the screen, which
+  speeds their runs. The `u64` and `i64` mixed-size windows also store
+  without bounds checks, 1.05-1.2x faster on interleaved `u64` sizes.
+- The specialized bulk decoders decode a window that holds no run as
+  eight scalar decodes written out in sequence. The loop they replace
+  mispredicted its exit once per window on unpredictable sizes.
+  Interleaved sizes decode 1.2-1.45x faster on a repeating mix,
+  ~1.1-1.25x on choppy delta streams, and up to 1.15x on random sizes,
+  which brings the specialized decoders level with or ahead of the
+  generic ones everywhere but randomly interleaved sizes. Runs are
+  unchanged within noise, except one-byte runs at x86-64-v1, which
+  measured 3-20% slower (about 0.02 ns per value).
+- The run iterators (`decode_iter_u32`, `_u64`, `_i32`, `_i64`) buffer
+  eight values at a time between runs wherever eight must exist,
+  instead of looking for a run again after every value: 1.4-2.2x
+  faster on repeating mixes, up to 1.5x on random sizes, 1.2-1.5x on
+  choppy delta streams, and 1.3-1.75x on interleaved wide `u64`
+  values. They now beat the generic `decode_iter` on every
+  distribution measured.
+- The `alloc` `Vec` helpers now use the run fast paths for `u32`,
+  `u64`, `i32`, and `i64`, and `bulk_encode_append` (which
+  `bulk_encode_to_vec` now builds on) encodes in bounded chunks into
+  worst-case room instead of first summing every value's size.
+  Per 1,024 values on x86_64, `bulk_encode_append` is 2.4-5.4x faster
+  on runs and 1.27x on random sizes, `bulk_encode_to_vec` 2.2-4.2x
+  and 1.15x, and `bulk_decode_values` 1.5-2.8x, including 2.0x on
+  random sizes. Types whose `MAX_ENCODED_SIZE` exceeds 4 KiB keep the
+  exact sizing pass.
+
 ## 0.4.6
 
 ### Fixed

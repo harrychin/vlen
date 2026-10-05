@@ -6,6 +6,7 @@ published crate. Install the pinned tool used in CI, then run either target:
 ```sh
 cargo install cargo-fuzz --version 0.13.2 --locked
 cargo +nightly fuzz run decode_arbitrary
+cargo +nightly fuzz run encode_arbitrary
 cargo +nightly fuzz run serde_arbitrary
 ```
 
@@ -26,4 +27,8 @@ cargo +nightly fuzz run decode_arbitrary fuzz/artifacts/decode_arbitrary/<input>
 
 `decode_arbitrary` compares checked scalar, generic bulk, specialized bulk,
 generic iterator, and run-accelerated iterator behavior over arbitrary byte
-streams. `serde_arbitrary` pressures both human-readable and binary visitors.
+streams. `encode_arbitrary` derives values in every size class from the input
+and compares the specialized bulk encoders and `Vec` helpers with the generic
+encoder, round-trips `encode_padded` at every legal width, and drives
+`Writer::write`/`reserve`/`fill` sequences against a model. `serde_arbitrary`
+pressures both human-readable and binary visitors.
