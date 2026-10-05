@@ -114,7 +114,12 @@ per-value length arithmetic entirely:
   measured faster than their SWAR lane math, unless the SSSE3 kernel
   below is compiled in.
 - The window checks are gated so that streams with no runs pay only a
-  compare or two per eight values.
+  compare or two per eight values. The signed encoders skip two of
+  those gates, a test of the window's first and last sizes and a
+  screen of its ends for the one-byte class: on delta streams both
+  ends are small about as often as not, so the gates mispredicted, and
+  dropping them encodes delta streams up to 1.9x faster. Unsigned
+  windows keep the screen, which makes their runs up to 1.4x faster.
 - Encode windows that are not runs go branch-free: a table indexed by
   each value's leading zeros gives its layout (prefix bits, low-bit
   mask, shift, and length), the word `prefix | (v & low) | ((v >>
@@ -191,7 +196,9 @@ hardware). "All n-byte" draws values uniformly across that size class:
 | `u64`, all six- to nine-byte    | **~2-2.4x faster**            | **~1.3x faster**              |
 | mixed sizes, repeating pattern  | ~1.1-1.4x faster              | ~1.1x faster                  |
 | random sizes                    | ~1.1-1.2x faster              | ~1.2-1.35x slower             |
-| `u64`, random six- to nine-byte | ~1.1-1.2x faster              | ~1.2x slower                  |
+| `u64`, random six- to nine-byte | about even to ~1.5x faster    | ~1.2x slower                  |
+| signed deltas, 1 in 64 a spike  | **~1.2-1.9x faster**          | **~1.6-2.2x faster**          |
+| signed deltas, 1 in 4 a spike   | ~1.1-1.5x slower              | ~1.15x slower                 |
 
 Prefer the specialized functions whenever the data has runs of
 similarly-sized values; only randomly interleaved sizes favor the
@@ -202,11 +209,11 @@ sizes were unpredictable, which cost the specialized decoders up to
 1.45x on interleaved sizes (1.1-1.15x on random ones). The run
 iterators buffer eight such values at a time wherever eight must
 exist, and now beat the generic `decode_iter` on every distribution
-measured. The remaining gap on random sizes is
-the run check itself, because a decoder cannot know where the next
-value starts without reading the current one's prefix. Ways of closing
-it that were measured and dropped, because each bought mixed-data speed
-with run speed or bought nothing:
+measured. The remaining gap on random sizes is the run check itself,
+because a decoder cannot know where the next value starts without
+reading the current one's prefix. Ways of closing it that were
+measured and dropped, because each bought mixed-data speed with run
+speed or bought nothing:
 
 - a branch-free pre-test of every decode run class (random sizes ~8%
   faster, runs 12-19% slower);
@@ -229,8 +236,13 @@ a real stream would. Over 65,536 values with sizes drawn from a strong
 generator, which it cannot learn, generic encoding and decoding both
 cost 6-8 ns per value. The branch-free specialized encoder stays near
 1.8 ns there, about 3.7x faster than generic, and the specialized
-decoders run even with generic (0.96-1.04x). The criterion benches and
-the README comparison use 1,024 values, so their random-size rows
+decoders run even with generic (0.96-1.04x). Signed deltas with a
+spike in one value of four flip from the losses above to 2-3x faster
+encoding and even decoding. The one row that gets worse is randomly
+interleaved six- to nine-byte `u64` encoding (0.8-1.25x): the generic
+encoder writes those binary length-prefix forms with almost no
+branching, so it has no mispredictions to lose. The criterion benches
+and the README comparison use 1,024 values, so their random-size rows
 describe the learned case.
 
 The criterion benches in `benches/bulk.rs` are sensitive to code

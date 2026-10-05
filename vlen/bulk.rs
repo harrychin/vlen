@@ -161,9 +161,13 @@ macro_rules! window_run_fns {
 		/// Returns the new byte offset after encoding all eight, or
 		/// `None` when the window holds no run (or the output lacks
 		/// scratch room) and the caller must encode it one value at
-		/// a time.
+		/// a time. `PRE_TEST` screens the one-byte class on the
+		/// window's ends first: unsigned windows are faster with it
+		/// (by up to 1.4x), zigzagged delta windows without it (by up
+		/// to 1.5x), because their ends are both small about as
+		/// often as not and the screen mispredicts.
 		#[inline(always)]
-		fn $try_enc(
+		fn $try_enc<const PRE_TEST: bool>(
 			buf: &mut [u8],
 			offset: usize,
 			chunk: &[$ut; 8],
@@ -189,7 +193,7 @@ macro_rules! window_run_fns {
 			let last = chunk[7];
 			// The one-byte span is a power of two, so a single
 			// or-reduction is exact here.
-			if (first | last) < 0x80
+			if (!PRE_TEST || (first | last) < 0x80)
 				&& chunk.iter().fold(0, |acc, &v| acc | v) < 0x80
 			{
 				// Eight one-byte values become one packed word.
@@ -586,14 +590,19 @@ fn encode_mixed_window_u64(
 	offset: usize,
 	chunk: &[u64; 8],
 ) -> Option<usize> {
-	let dst = buf.get_mut(offset..offset + 7 * 9 + 9)?;
+	let dst: &mut [u8; 7 * 9 + 9] = buf.get_mut(offset..)?.first_chunk_mut()?;
 	let mut o = 0;
 	for &v in chunk {
 		let layout = U64_LAYOUTS[v.leading_zeros() as usize];
 		let word =
 			layout.prefix | (v & layout.low) | ((v >> layout.shift) << 8);
-		dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
-		dst[o + 8] = (v >> 56) as u8;
+		// Seven values take at most 63 bytes. Clamping lets the
+		// compiler drop both stores' bounds checks, which measured
+		// 1.05-1.3x faster here (and slower for u32, which has one
+		// store per value).
+		let at = o.min(7 * 9);
+		dst[at..at + 8].copy_from_slice(&word.to_le_bytes());
+		dst[at + 8] = (v >> 56) as u8;
 		o += layout.len as usize;
 	}
 	Some(offset + o)
@@ -641,7 +650,8 @@ macro_rules! bulk_unsigned {
 			while i < values.len() {
 				if let Some(chunk) = values.get(i..i + 8) {
 					let chunk: &[$ut; 8] = chunk.try_into().unwrap();
-					if let Some(new_offset) = $try_enc(buf, offset, chunk)
+					if let Some(new_offset) =
+						$try_enc::<true>(buf, offset, chunk)
 					{
 						offset = new_offset;
 						i += 8;
@@ -759,16 +769,16 @@ macro_rules! bulk_signed {
 					for (z, &v) in mapped.iter_mut().zip(chunk) {
 						*z = zigzag(v);
 					}
-					// A window can only be a run if its first and
-					// last values encode at the same length.
-					if mapped[0].encoded_size() == mapped[7].encoded_size() {
-						if let Some(new_offset) =
-							$try_enc(buf, offset, &mapped)
-						{
-							offset = new_offset;
-							i += 8;
-							continue;
-						}
+					// No test of the first and last sizes first: on
+					// delta streams it mispredicted, and dropping it
+					// measured 1.1-1.4x faster there. The run function
+					// gates each class itself.
+					if let Some(new_offset) =
+						$try_enc::<false>(buf, offset, &mapped)
+					{
+						offset = new_offset;
+						i += 8;
+						continue;
 					}
 					if let Some(new_offset) = $mixed_enc(buf, offset, &mapped)
 					{

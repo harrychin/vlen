@@ -65,6 +65,13 @@
   values 1.2x; runs are unchanged within noise. The specialized `u32`
   encoders now match or beat the generic encoder on every distribution
   measured.
+- The signed bulk encoders (`bulk_encode_i32`, `_i64`) no longer test
+  each window's first and last sizes, or screen its ends for the
+  one-byte class, before looking for a run: on delta streams both
+  mispredicted. Smooth delta streams encode 1.3-1.9x faster and choppy
+  ones up to 1.7x. The unsigned encoders keep the screen, which
+  speeds their runs. The `u64` and `i64` mixed-size windows also store
+  without bounds checks, 1.05-1.2x faster on interleaved `u64` sizes.
 - The specialized bulk decoders decode a window that holds no run as
   eight scalar decodes written out in sequence. The loop they replace
   mispredicted its exit once per window on unpredictable sizes.
