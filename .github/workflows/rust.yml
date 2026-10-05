@@ -43,6 +43,21 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
+  miri:
+    name: Miri (portable paths and every x86 kernel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Portable paths
+        run: cargo miri test --no-default-features --test contract_tests --test tests
+      - name: SSE2 and SSSE3 kernels
+        run: cargo miri test --all-features --test contract_tests --test tests
+        env:
+          RUSTFLAGS: -C target-feature=+ssse3
+
   msrv:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
