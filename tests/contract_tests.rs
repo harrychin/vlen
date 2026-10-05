@@ -1189,3 +1189,96 @@ fn writer_reserve_reports_out_of_space() {
 		})
 	);
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn vec_helpers_match_generic_codecs_across_chunks() {
+	fn check<T: Encode + Decode + PartialEq + core::fmt::Debug>(values: &[T]) {
+		let mut generic =
+			vec![0u8; values.len() * <T as Encode>::MAX_ENCODED_SIZE];
+		let len = bulk_encode(&mut generic, values).unwrap();
+		let generic = &generic[..len];
+		assert_eq!(vlen::bulk_encode_to_vec(values), generic);
+		let mut appended = b"prefix".to_vec();
+		vlen::bulk_encode_append(&mut appended, values);
+		assert_eq!(&appended[6..], generic);
+		assert_eq!(vlen::bulk_decode_values::<T>(generic).unwrap(), values);
+	}
+
+	// Runs of every size class, long enough to span several of the
+	// append path's chunks, with class changes inside windows.
+	let wide: Vec<u64> = (0..5000u64)
+		.map(|i| match (i / 701) % 6 {
+			0 => i % 0x80,
+			1 => 0x80 + i,
+			2 => 0x4000 + i * 97,
+			3 => 0x1000_0000 + i,
+			4 => (1 << 40) + i,
+			_ => u64::MAX - i,
+		})
+		.collect();
+	let narrow: Vec<u32> = wide.iter().map(|&v| v as u32).collect();
+	check(&wide);
+	check(&narrow);
+	check(&wide.iter().map(|&v| v as i64).collect::<Vec<_>>());
+	check(&narrow.iter().map(|&v| v as i32).collect::<Vec<_>>());
+	check(&narrow.iter().map(|&v| v as u16).collect::<Vec<_>>());
+	check::<u32>(&[]);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn bulk_encode_append_handles_downstream_maximums() {
+	// 500 eighteen-byte values span three worst-case chunks.
+	let mut bytes = Vec::new();
+	vlen::bulk_encode_append(&mut bytes, &[EighteenBytes; 500]);
+	assert_eq!(bytes, b"eighteen-byte-data".repeat(500));
+
+	// A maximum far beyond any real encoding must not be reserved per
+	// value: such types are sized exactly instead.
+	#[derive(Clone, Copy)]
+	struct HugeMaximum;
+	impl Encode for HugeMaximum {
+		const MAX_ENCODED_SIZE: usize = 1 << 40;
+
+		fn encoded_size(self) -> usize {
+			1
+		}
+
+		fn encode(self, buf: &mut [u8]) -> vlen::Result<usize> {
+			let slot = buf.first_mut().ok_or(Error::BufferTooSmall {
+				needed: 1,
+				available: 0,
+			})?;
+			*slot = 0x2A;
+			Ok(1)
+		}
+	}
+	let mut bytes = Vec::new();
+	vlen::bulk_encode_append(&mut bytes, &[HugeMaximum; 3]);
+	assert_eq!(bytes, [0x2A; 3]);
+	assert_eq!(vlen::bulk_encode_to_vec(&[HugeMaximum; 2]), [0x2A; 2]);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn bulk_decode_values_reports_the_iterators_error() {
+	// A run long enough for the fast path, then an invalid prefix or a
+	// truncated value.
+	for tail in [&[0xFFu8][..], &[0xC0, 0x01][..]] {
+		let mut bytes = vec![0x05u8; 16];
+		bytes.extend_from_slice(tail);
+		macro_rules! check {
+			($t:ty) => {{
+				let expected = decode_iter::<$t>(&bytes)
+					.collect::<vlen::Result<Vec<$t>>>();
+				assert!(expected.is_err());
+				assert_eq!(vlen::bulk_decode_values::<$t>(&bytes), expected);
+			}};
+		}
+		check!(u32);
+		check!(u64);
+		check!(i32);
+		check!(i64);
+	}
+}

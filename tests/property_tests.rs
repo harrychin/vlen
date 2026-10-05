@@ -754,3 +754,44 @@ fn test_bulk_u32_round_trip() {
 		Ok(())
 	});
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn vec_helpers_match_generic_codecs_on_arbitrary_input() {
+	arbtest(|u| {
+		let bytes: &[u8] = u.arbitrary()?;
+		macro_rules! check_bytes {
+			($t:ty) => {{
+				let collected =
+					decode_iter::<$t>(bytes).collect::<Result<Vec<$t>>>();
+				assert_eq!(bulk_decode_values::<$t>(bytes), collected);
+			}};
+		}
+		check_bytes!(u16);
+		check_bytes!(u32);
+		check_bytes!(u64);
+		check_bytes!(i32);
+		check_bytes!(i64);
+
+		macro_rules! check_values {
+			($t:ty) => {{
+				let values: Vec<$t> = u.arbitrary()?;
+				let mut generic = vec![0u8; values.len() * 9];
+				let len = bulk_encode(&mut generic, &values).unwrap();
+				assert_eq!(bulk_encode_to_vec(&values), &generic[..len]);
+				let mut appended = vec![0xAB];
+				bulk_encode_append(&mut appended, &values);
+				assert_eq!(&appended[1..], &generic[..len]);
+				assert_eq!(
+					bulk_decode_values::<$t>(&generic[..len]),
+					Ok(values)
+				);
+			}};
+		}
+		check_values!(u32);
+		check_values!(u64);
+		check_values!(i32);
+		check_values!(i64);
+		Ok(())
+	});
+}

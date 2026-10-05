@@ -177,35 +177,54 @@ pub fn encode_append<T: Encode>(buf: &mut alloc::vec::Vec<u8>, value: T) {
 }
 
 /// Appends the encodings of all `values` to a byte vector.
+///
+/// Encodes through [`Encode::encode_slice`], so `u32`, `u64`, `i32`, and
+/// `i64` take their run-accelerated bulk encoders.
 #[cfg(feature = "alloc")]
 pub fn bulk_encode_append<T: Encode>(
 	buf: &mut alloc::vec::Vec<u8>,
 	values: &[T],
 ) {
-	let total: usize = values.iter().map(|v| v.encoded_size()).sum();
-	let start = buf.len();
-	buf.resize(start + total, 0);
-	let len = bulk_encode(&mut buf[start..], values)
-		.expect("buffer sized by encoded_size");
-	debug_assert_eq!(len, total);
+	const CHUNK_BYTES: usize = 4096;
+	if T::MAX_ENCODED_SIZE > CHUNK_BYTES {
+		// Worst-case room would be wasteful: size the values exactly.
+		let total: usize = values.iter().map(|v| v.encoded_size()).sum();
+		let start = buf.len();
+		buf.resize(start + total, 0);
+		let len = T::encode_slice(values, &mut buf[start..])
+			.expect("buffer sized by encoded_size");
+		debug_assert_eq!(len, total);
+		return;
+	}
+	// Encode in chunks into worst-case room and trim after each, so no
+	// separate sizing pass is needed and the slack stays within a chunk.
+	for chunk in values.chunks(CHUNK_BYTES / T::MAX_ENCODED_SIZE) {
+		let start = buf.len();
+		buf.resize(start + chunk.len() * T::MAX_ENCODED_SIZE, 0);
+		let len = T::encode_slice(chunk, &mut buf[start..])
+			.expect("buffer sized by MAX_ENCODED_SIZE");
+		buf.truncate(start + len);
+	}
 }
 
 /// Encodes a slice of values into a newly allocated buffer.
+///
+/// Encodes as [`bulk_encode_append`] does; the result is shrunk to fit.
 #[cfg(feature = "alloc")]
 #[must_use]
 pub fn bulk_encode_to_vec<T: Encode>(values: &[T]) -> alloc::vec::Vec<u8> {
-	let total = values.iter().map(|v| v.encoded_size()).sum();
-	let mut buf = alloc::vec![0u8; total];
-	let len =
-		bulk_encode(&mut buf, values).expect("buffer sized by encoded_size");
-	debug_assert_eq!(len, total);
+	let mut buf = alloc::vec::Vec::new();
+	bulk_encode_append(&mut buf, values);
+	buf.shrink_to_fit();
 	buf
 }
 
 /// Decodes every value in a slice into a newly allocated vector.
 ///
-/// The buffer must contain a whole number of valid encodings.
+/// The buffer must contain a whole number of valid encodings. Decodes
+/// through [`Decode::decode_to_vec`], so `u32`, `u64`, `i32`, and `i64`
+/// take the run fast paths of their bulk decoders.
 #[cfg(feature = "alloc")]
 pub fn bulk_decode_values<T: Decode>(buf: &[u8]) -> Result<alloc::vec::Vec<T>> {
-	decode_iter(buf).collect()
+	T::decode_to_vec(buf)
 }

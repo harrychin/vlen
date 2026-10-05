@@ -991,3 +991,53 @@ run_iter_signed! {
 	DecodeIterI64,
 	i64, u64, try_decode_run_u64
 }
+
+/// Generates the run-accelerated `Decode::decode_to_vec` for one type:
+/// whole runs are appended from the window fast paths, and a position
+/// without a run decodes up to eight values one at a time so the failed
+/// check is amortized, as in the bulk decoders. `$map` turns each
+/// window lane into a value.
+#[cfg(feature = "alloc")]
+macro_rules! decode_to_vec_fn {
+	($name:ident, $t:ident, $ut:ident, $try_dec:ident, $map:expr) => {
+		pub(crate) fn $name(buf: &[u8]) -> Result<alloc::vec::Vec<$t>> {
+			let map: fn($ut) -> $t = $map;
+			// Every encoding fits in MAX_ENCODED_SIZE bytes, so this
+			// many values at least are coming.
+			let mut out = alloc::vec::Vec::with_capacity(
+				buf.len().div_ceil(<$t as Decode>::MAX_ENCODED_SIZE),
+			);
+			let mut offset = 0;
+			while offset < buf.len() {
+				let mut lanes: [$ut; 8] = [0; 8];
+				if let Some((n, next)) = $try_dec(buf, offset, &mut lanes) {
+					out.extend(lanes[..n].iter().map(|&lane| map(lane)));
+					offset = next;
+					continue;
+				}
+				for _ in 0..8 {
+					if offset >= buf.len() {
+						break;
+					}
+					let (value, len) = <$t>::decode(&buf[offset..])?;
+					out.push(value);
+					offset += len;
+				}
+			}
+			Ok(out)
+		}
+	};
+}
+
+#[cfg(feature = "alloc")]
+decode_to_vec_fn!(decode_to_vec_u32, u32, u32, try_decode_run_u32, |v| v);
+#[cfg(feature = "alloc")]
+decode_to_vec_fn!(decode_to_vec_u64, u64, u64, try_decode_run_u64, |v| v);
+#[cfg(feature = "alloc")]
+decode_to_vec_fn!(decode_to_vec_i32, i32, u32, try_decode_run_u32, |z| {
+	((z >> 1) as i32) ^ -((z & 1) as i32)
+});
+#[cfg(feature = "alloc")]
+decode_to_vec_fn!(decode_to_vec_i64, i64, u64, try_decode_run_u64, |z| {
+	((z >> 1) as i64) ^ -((z & 1) as i64)
+});

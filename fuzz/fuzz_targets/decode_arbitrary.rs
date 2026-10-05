@@ -74,4 +74,22 @@ fuzz_target!(|data: &[u8]| {
 		decode_iter::<i64>(bytes).collect::<Vec<_>>(),
 		decode_iter_i64(bytes).collect::<Vec<_>>()
 	);
+
+	macro_rules! compare_vec_helpers {
+		($t:ty) => {{
+			let collected =
+				decode_iter::<$t>(bytes).collect::<Result<Vec<$t>>>();
+			assert_eq!(bulk_decode_values::<$t>(bytes), collected);
+			if let Ok(values) = collected {
+				let mut generic = vec![0u8; values.len() * 9];
+				let len = bulk_encode(&mut generic, &values).unwrap();
+				assert_eq!(bulk_encode_to_vec(&values), &generic[..len]);
+			}
+		}};
+	}
+
+	compare_vec_helpers!(u32);
+	compare_vec_helpers!(u64);
+	compare_vec_helpers!(i32);
+	compare_vec_helpers!(i64);
 });

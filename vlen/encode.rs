@@ -430,6 +430,21 @@ pub trait Encode: Copy {
 	fn is_canonical_encoding(self, encoding: &[u8]) -> bool {
 		encoding.len() == self.encoded_size()
 	}
+
+	/// Encodes `values` back to back into `buf`, returning the total
+	/// encoded length, exactly as [`bulk_encode`](crate::bulk_encode)
+	/// does.
+	///
+	/// The generic `Vec` helpers (`bulk_encode_to_vec` and
+	/// `bulk_encode_append`, with the `alloc` feature) encode through
+	/// this, so a type with a faster bulk encoder can supply it: the
+	/// built-in `u32`, `u64`, `i32`, and `i64` implementations use their
+	/// run-accelerated encoders. The default is
+	/// [`bulk_encode`](crate::bulk_encode). An override must produce the
+	/// same bytes and errors.
+	fn encode_slice(values: &[Self], buf: &mut [u8]) -> Result<usize> {
+		crate::bulk::bulk_encode(buf, values)
+	}
 }
 
 /// Implements [`Encode`] on top of an array-based encoder plus a size
@@ -438,7 +453,7 @@ pub trait Encode: Copy {
 /// function so the hot path inlined into callers stays small.
 macro_rules! impl_encode {
 	($t:ty, $size:expr, $encode_fn:ident, $short_fn:ident,
-		$v:ident => $size_expr:expr) => {
+		$v:ident => $size_expr:expr $(, bulk = $bulk_fn:path)?) => {
 		#[cold]
 		#[inline(never)]
 		fn $short_fn(value: $t, buf: &mut [u8]) -> Result<usize> {
@@ -485,6 +500,13 @@ macro_rules! impl_encode {
 				encoding.len() == self.encoded_size()
 					&& has_canonical_prefix(encoding)
 			}
+
+			$(
+				#[inline]
+				fn encode_slice(values: &[Self], buf: &mut [u8]) -> Result<usize> {
+					$bulk_fn(buf, values)
+				}
+			)?
 		}
 	};
 }
@@ -492,18 +514,20 @@ macro_rules! impl_encode {
 impl_encode!(u16, 3, encode_u16, encode_u16_short,
 	v => encoded_size_u16(v));
 impl_encode!(u32, 5, encode_u32, encode_u32_short,
-	v => encoded_size_u32(v));
+	v => encoded_size_u32(v), bulk = crate::bulk::bulk_encode_u32);
 impl_encode!(u64, 9, encode_u64, encode_u64_short,
-	v => encoded_size_u64(v));
+	v => encoded_size_u64(v), bulk = crate::bulk::bulk_encode_u64);
 impl_encode!(u128, 17, encode_u128, encode_u128_short,
 	v => encoded_size_u128(v));
 
 impl_encode!(i16, 3, encode_i16, encode_i16_short,
 	v => encoded_size_u16(zigzag!(i16, u16, v)));
 impl_encode!(i32, 5, encode_i32, encode_i32_short,
-	v => encoded_size_u32(zigzag!(i32, u32, v)));
+	v => encoded_size_u32(zigzag!(i32, u32, v)),
+	bulk = crate::bulk::bulk_encode_i32);
 impl_encode!(i64, 9, encode_i64, encode_i64_short,
-	v => encoded_size_u64(zigzag!(i64, u64, v)));
+	v => encoded_size_u64(zigzag!(i64, u64, v)),
+	bulk = crate::bulk::bulk_encode_i64);
 impl_encode!(
 	i128, 17, encode_i128, encode_i128_short,
 	v => encoded_size_u128(zigzag!(i128, u128, v))

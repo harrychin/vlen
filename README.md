@@ -162,7 +162,7 @@ errors.
 
 | Feature | Adds |
 |---------|------|
-| `alloc` | `Vec` conveniences: `encode_to_vec`/`encode_append`, `bulk_encode_to_vec`/`bulk_encode_append`, and `bulk_decode_values` |
+| `alloc` | `Vec` conveniences: `encode_to_vec`/`encode_append`, `bulk_encode_to_vec`/`bulk_encode_append`, and `bulk_decode_values` (run-accelerated for `u32`, `u64`, `i32`, and `i64`) |
 | `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
 | `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs; a handful of audited load/store unsafe blocks) |
 | `full`  | Everything above |

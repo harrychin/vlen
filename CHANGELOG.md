@@ -14,6 +14,11 @@
 - `Writer::reserve` and `Writer::fill`, with the `Slot` handle they
   share: reserve a zeroed fixed-width slot in a cursor and fill it
   later.
+- `Encode::encode_slice` and (with `alloc`) `Decode::decode_to_vec`:
+  provided methods the generic `Vec` helpers go through, so a type
+  with a faster bulk codec can supply it. Their defaults are
+  `bulk_encode` and collecting `decode_iter`; the built-in `u32`,
+  `u64`, `i32`, and `i64` implementations use the run fast paths.
 
 ### Changed
 
@@ -37,6 +42,15 @@
   values below 2^28 measure ~9% slower, apparently from code layout:
   no window there reaches the new path. `u32` and `i32` are
   unaffected.
+- The `alloc` `Vec` helpers now use the run fast paths for `u32`,
+  `u64`, `i32`, and `i64`, and `bulk_encode_append` (which
+  `bulk_encode_to_vec` now builds on) encodes in bounded chunks into
+  worst-case room instead of first summing every value's size.
+  Per 1,024 values on x86_64, `bulk_encode_append` is 2.4-5.4x faster
+  on runs and 1.27x on random sizes, `bulk_encode_to_vec` 2.2-4.2x
+  and 1.15x, and `bulk_decode_values` 1.5-2.8x, including 2.0x on
+  random sizes. Types whose `MAX_ENCODED_SIZE` exceeds 4 KiB keep the
+  exact sizing pass.
 
 ## 0.4.6
 
