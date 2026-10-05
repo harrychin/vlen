@@ -103,9 +103,8 @@ per-value length arithmetic entirely:
 - Three- to five-byte encode runs emit one class-known full-width
   store per value, and `u64` six- to nine-byte encode runs a prefix
   byte plus one eight-byte store; four-byte decode runs use 32-bit
-  lanes, and
-  binary-length-prefix decode runs (five to nine bytes) use pairs of
-  plain masked loads.
+  lanes, and binary-length-prefix decode runs (five to nine bytes) use
+  pairs of plain masked loads.
 - Three-byte decode runs deliberately stay on the branchy scalar path,
   which measured faster than their SWAR lane math.
 - The window checks are gated so that streams with no runs pay only a
@@ -136,21 +135,30 @@ code.
 
 ### Specialized vs generic bulk functions
 
-Indicative numbers for 1,024 values (Apple M-series, `--quick`
-criterion run — measure on your own hardware):
+Indicative numbers for 1,024 values (x86_64, 4-vCPU cloud VM; each
+pair timed in one binary, best of 40 batches — measure on your own
+hardware). "All n-byte" draws values uniformly across that size class:
 
-| Distribution    | specialized vs generic encode | specialized vs generic decode |
-|-----------------|------------------------------:|------------------------------:|
-| all one-byte    | **~4x faster**                | **~4x faster**                |
-| all two-byte    | **~1.2x faster**              | **~3.7x faster**              |
-| all three-byte  | **~1.5x faster**              | ~1.2x slower                  |
-| all four-byte   | **~1.7x faster**              | **~2.4x faster**              |
-| all five-byte   | **~3.5x faster**              | **~2x faster**                |
-| mixed / random  | ~1.2-1.4x slower              | ~1.1-1.4x slower              |
+| Distribution                    | specialized vs generic encode | specialized vs generic decode |
+|---------------------------------|------------------------------:|------------------------------:|
+| all one-byte                    | **~1.7x faster**              | **~2.5x faster**              |
+| all two-byte                    | **~4x faster**                | **~2.5x faster**              |
+| all three-byte                  | **~1.4x faster**              | about even                    |
+| all four-byte                   | **~2x faster**                | **~2.3x faster**              |
+| all five-byte                   | **~2.4x faster**              | **~1.3x faster**              |
+| `u64`, all six- to nine-byte    | **~2-2.4x faster**            | **~1.3x faster**              |
+| mixed / random sizes            | ~1.2-1.4x slower              | ~1.3-1.4x slower              |
+| `u64`, random six- to nine-byte | ~1.8x slower                  | ~1.2x slower                  |
 
 Prefer the specialized functions whenever the data has runs of
-similarly-sized values; only adversarially interleaved sizes favor the
-generic functions.
+similarly-sized values; only interleaved sizes favor the generic
+functions. The `alloc` `Vec` helpers take the specialized paths for
+`u32`, `u64`, `i32`, and `i64`.
+
+The criterion benches in `benches/bulk.rs` are sensitive to code
+layout on the generic side: the same generic encode has measured
+anywhere from 1.3 to 2.2 µs there as unrelated code changed, so
+compare both sides within one build.
 
 ### Build configuration
 

@@ -8,9 +8,8 @@
 //! encodings several values at a time; they are portable safe Rust,
 //! active on every architecture. Prefer them whenever the data has
 //! runs of similarly-sized values (the signed variants shine on
-//! delta-encoded streams); for adversarially mixed sizes the generic
-//! functions are a few percent faster because they skip the run
-//! detection.
+//! delta-encoded streams); for interleaved sizes the generic functions
+//! are about 1.2-1.4x faster because they skip the run detection.
 
 use crate::decode::Decode;
 use crate::encode::Encode;

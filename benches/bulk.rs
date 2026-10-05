@@ -171,6 +171,12 @@ fn bench_bulk_u64(c: &mut Criterion) {
 					.unwrap()
 			})
 		});
+		c.bench_function(&format!("bulk_decode_generic_u64/{kind}"), |b| {
+			b.iter(|| {
+				bulk_decode(black_box(encoded), black_box(&mut decoded))
+					.unwrap()
+			})
+		});
 	}
 }
 
