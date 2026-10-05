@@ -58,6 +58,7 @@
 //! | Canonical first value | [`decode_canonical()`] |
 //! | Exact whole input | [`decode_exact()`]; use [`decode_strict()`] when it must also be canonical |
 //! | A mixed-type message | [`Writer`] and [`Reader`]; use [`Reader::read_canonical`] and [`Reader::finish`] for strict fields and framing |
+//! | A slot filled once its value is known | [`encode_padded()`], or [`Writer::reserve`] and [`Writer::fill`] |
 //! | A homogeneous batch | [`bulk_encode()`]/[`bulk_decode()`], or the specialized `u32`, `u64`, `i32`, and `i64` variants |
 //! | Lazy stream decoding | [`decode_iter()`], or a specialized iterator such as [`decode_iter_u32()`] |
 //! | An owned buffer (`alloc`) | [`encode_to_vec()`], [`encode_append()`], and the bulk `Vec` helpers |
@@ -104,7 +105,7 @@ mod kernels;
 #[cfg(feature = "serde")]
 pub mod serde;
 
-pub use cursor::{Reader, Writer};
+pub use cursor::{Reader, Slot, Writer};
 pub use error::{Error, Result, StrictError, StrictResult};
 
 pub use decode::{
@@ -115,9 +116,9 @@ pub use decode::{
 
 pub use encode::{
 	Encode, encode, encode_f32, encode_f64, encode_i8, encode_i16, encode_i32,
-	encode_i64, encode_i128, encode_u8, encode_u16, encode_u32, encode_u64,
-	encode_u128, encoded_len, encoded_size, encoded_size_u8, encoded_size_u16,
-	encoded_size_u32, encoded_size_u64, encoded_size_u128,
+	encode_i64, encode_i128, encode_padded, encode_u8, encode_u16, encode_u32,
+	encode_u64, encode_u128, encoded_len, encoded_size, encoded_size_u8,
+	encoded_size_u16, encoded_size_u32, encoded_size_u64, encoded_size_u128,
 };
 
 pub use bulk::{

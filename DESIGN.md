@@ -58,7 +58,9 @@ byte sequence that is unnecessarily long:
 
 The `encode_*` functions never generate over-long encodings, but the
 `decode_*` functions accept them. This allows a `vlen` slot to be
-reserved in a buffer before the value to be written is known.
+reserved in a buffer before the value to be written is known;
+`encode_padded` (or `Writer::reserve` and `Writer::fill`) writes a
+value into such a slot using exactly its width.
 Applications that require a single canonical encoding for any given
 value can use `decode_canonical`; `decode_exact` separately requires
 the first value to consume the whole slice, and `decode_strict`

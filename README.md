@@ -21,6 +21,7 @@ let (value, _) = u32::decode(&buf[..len])?;    // 12345
 | Canonical first value | `decode_canonical` |
 | Exact whole input | `decode_exact`; use `decode_strict` when it must also be canonical |
 | A mixed-type message | `Writer` and `Reader`; add `read_canonical` and `finish` for strict fields and framing |
+| A slot filled once its value is known | `encode_padded`, or `Writer::reserve` and `Writer::fill` |
 | A homogeneous batch | `bulk_encode`/`bulk_decode`, or the specialized `u32`, `u64`, `i32`, and `i64` variants |
 | Lazy stream decoding | `decode_iter`, or a specialized iterator such as `decode_iter_u32` |
 | An owned buffer (`alloc`) | `encode_to_vec`, `encode_append`, and the bulk `Vec` helpers |

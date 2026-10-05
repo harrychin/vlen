@@ -307,6 +307,88 @@ pub fn encoded_size<T: Encode>(value: T) -> usize {
 	value.encoded_size()
 }
 
+/// Encodes a value into exactly `N` bytes, padding it to an over-long
+/// encoding when its canonical form is shorter.
+///
+/// This fills a slot reserved before its value was known, such as a
+/// length prefix written after its payload. Every decoder for `T`
+/// accepts the result and reports `N` bytes consumed, while
+/// [`decode_canonical`](crate::decode_canonical) and
+/// [`decode_strict`](crate::decode_strict) reject it unless `N` is the
+/// canonical length (in which case the bytes are exactly the canonical
+/// encoding). [`Writer::reserve`](crate::Writer::reserve) and
+/// [`Writer::fill`](crate::Writer::fill) manage such slots in a cursor.
+///
+/// Fails with [`Error::BufferTooSmall`] when the canonical encoding
+/// needs more than `N` bytes. `N` must be between 1 and
+/// `T::MAX_ENCODED_SIZE`, which is checked at compile time: a wider
+/// slot would not decode as `T`.
+///
+/// The padding re-expresses `value`'s canonical encoding in the vlen
+/// wire grammar, which every built-in type uses. A downstream [`Encode`]
+/// implementation gets correct results when it encodes through a
+/// built-in type.
+///
+/// ```rust
+/// let mut msg = [0u8; 9];
+/// // A four-byte length slot, then the payload it describes.
+/// msg[4..].copy_from_slice(b"hello");
+/// let (slot, _) = msg.split_first_chunk_mut::<4>().unwrap();
+/// vlen::encode_padded(slot, 5u32)?;
+///
+/// assert_eq!(vlen::decode::<u32>(&msg)?, (5, 4));
+/// # Ok::<(), vlen::Error>(())
+/// ```
+///
+/// A slot wider than the type can decode does not compile:
+///
+/// ```rust,compile_fail,E0080
+/// let mut slot = [0u8; 6];
+/// vlen::encode_padded(&mut slot, 1u32).unwrap(); // u32 decodes at most 5
+/// ```
+pub fn encode_padded<T: Encode, const N: usize>(
+	buf: &mut [u8; N],
+	value: T,
+) -> Result<()> {
+	const {
+		assert!(
+			N >= 1 && N <= T::MAX_ENCODED_SIZE && N <= 17,
+			"padded width must be between 1 and the type's MAX_ENCODED_SIZE"
+		);
+	}
+	let needed = value.encoded_size();
+	if needed > N {
+		return Err(Error::BufferTooSmall {
+			needed,
+			available: N,
+		});
+	}
+	// Every width shares one grammar, so the canonical bytes decode to
+	// the value's wire representation at the widest type.
+	let mut canonical = [0u8; 17];
+	let len = value.encode(&mut canonical)?;
+	debug_assert_eq!(encoded_len(canonical[0]), len);
+	let (wire, _) = crate::decode::decode_u128(&canonical);
+
+	let mut out = [0u8; 17];
+	if N <= 4 {
+		// Prefix varint: N - 1 leading one bits, a zero, then the value
+		// zero-extended to 7 * N bits.
+		let low_bits = 8 - N as u32;
+		let prefix = !(0xFFu32 >> (N - 1)) & 0xFF;
+		let word = prefix
+			| (wire as u32 & ((1 << low_bits) - 1))
+			| (((wire >> low_bits) as u32) << 8);
+		out[..4].copy_from_slice(&word.to_le_bytes());
+	} else {
+		// Binary length prefix with N - 1 zero-extended payload bytes.
+		out[0] = 0xF0 | (N - 2) as u8;
+		out[1..].copy_from_slice(&wire.to_le_bytes());
+	}
+	buf.copy_from_slice(&out[..N]);
+	Ok(())
+}
+
 /// Types that can be encoded using vlen.
 ///
 /// # Implementation contract

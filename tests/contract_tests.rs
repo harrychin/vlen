@@ -971,3 +971,177 @@ fn encode_append_honors_downstream_encoded_sizes() {
 	vlen::encode_append(&mut bytes, EighteenBytes);
 	assert_eq!(&bytes[6..], b"eighteen-byte-data");
 }
+
+/// Pads every value to `N` bytes and checks that it decodes back, that
+/// canonical decoding accepts it exactly when `N` is the canonical
+/// length, and that a too-narrow slot is rejected untouched. Values are
+/// compared through their canonical bytes so floats compare by bits.
+fn check_padded<T: Encode + Decode, const N: usize>(values: &[T]) {
+	fn canonical<T: Encode>(value: T) -> Vec<u8> {
+		let mut buf = [0u8; 17];
+		let len = value.encode(&mut buf).unwrap();
+		buf[..len].to_vec()
+	}
+
+	for &value in values {
+		let expected = canonical(value);
+		let mut slot = [0xA5u8; N];
+		match vlen::encode_padded(&mut slot, value) {
+			Ok(()) => {
+				assert!(expected.len() <= N);
+				let (decoded, len) = T::decode(&slot).unwrap();
+				assert_eq!(len, N);
+				assert_eq!(canonical(decoded), expected);
+				if N == expected.len() {
+					assert_eq!(&slot[..], &expected[..]);
+				} else {
+					assert!(matches!(
+						vlen::decode_canonical::<T>(&slot),
+						Err(StrictError::NonCanonical { .. })
+					));
+				}
+			},
+			Err(err) => {
+				assert!(expected.len() > N);
+				assert_eq!(
+					err,
+					Error::BufferTooSmall {
+						needed: expected.len(),
+						available: N,
+					}
+				);
+				assert_eq!(slot, [0xA5; N]);
+			},
+		}
+	}
+}
+
+macro_rules! check_padded_widths {
+	($t:ty, $values:expr; $($n:literal)*) => {{
+		let values: Vec<$t> = $values;
+		$(check_padded::<$t, $n>(&values);)*
+	}};
+}
+
+/// Every size-class boundary, as the unsigned wire values that fit `T`.
+fn boundaries<T: TryFrom<u128>>() -> Vec<T> {
+	let mut wire = vec![0u128, 1];
+	for bits in [7, 14, 21, 28, 32, 40, 48, 56, 64, 72, 96, 120, 127] {
+		wire.extend([(1u128 << bits) - 1, 1u128 << bits]);
+	}
+	wire.push(u128::MAX);
+	wire.into_iter()
+		.filter_map(|v| T::try_from(v).ok())
+		.collect()
+}
+
+/// Signed values around every boundary, including both extremes.
+fn signed_boundaries<T: TryFrom<i128>>() -> Vec<T> {
+	let mut values = vec![i128::MIN, i128::MAX];
+	for v in boundaries::<u128>().into_iter().filter(|&v| v < 1 << 126) {
+		let v = v as i128;
+		values.extend([v, -v, -v - 1]);
+	}
+	values
+		.into_iter()
+		.filter_map(|v| T::try_from(v).ok())
+		.collect()
+}
+
+#[test]
+fn encode_padded_round_trips_at_every_width() {
+	check_padded_widths!(u8, boundaries(); 1 2);
+	check_padded_widths!(i8, signed_boundaries(); 1 2);
+	check_padded_widths!(u16, boundaries(); 1 2 3);
+	check_padded_widths!(i16, signed_boundaries(); 1 2 3);
+	check_padded_widths!(u32, boundaries(); 1 2 3 4 5);
+	check_padded_widths!(i32, signed_boundaries(); 1 2 3 4 5);
+	check_padded_widths!(u64, boundaries(); 1 2 3 4 5 6 7 8 9);
+	check_padded_widths!(i64, signed_boundaries(); 1 2 3 4 5 6 7 8 9);
+	check_padded_widths!(usize, boundaries(); 1 2 3 4 5 6 7 8 9);
+	check_padded_widths!(isize, signed_boundaries(); 1 2 3 4 5 6 7 8 9);
+	check_padded_widths!(
+		u128, boundaries();
+		1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+	);
+	check_padded_widths!(
+		i128, signed_boundaries();
+		1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+	);
+	let floats32 = vec![0.0f32, -0.0, 1.0, -1.5, f32::MAX, f32::NAN];
+	check_padded_widths!(f32, floats32; 1 2 3 4 5);
+	let floats64 = vec![0.0f64, -0.0, 1.0, -1.5, f64::MIN, f64::NAN];
+	check_padded_widths!(f64, floats64; 1 2 3 4 5 6 7 8 9);
+}
+
+#[test]
+fn encode_padded_reaches_decoders_of_wider_types() {
+	// One wire format: a padded u16 also decodes as every wider type.
+	let mut slot = [0u8; 3];
+	vlen::encode_padded(&mut slot, 300u16).unwrap();
+	assert_eq!(u32::decode(&slot), Ok((300, 3)));
+	assert_eq!(u128::decode(&slot), Ok((300, 3)));
+}
+
+#[test]
+fn writer_reserves_and_fills_slots() {
+	let mut buf = [0xFFu8; 16];
+	let mut writer = vlen::Writer::new(&mut buf);
+	writer.write(1u8).unwrap();
+	let count = writer.reserve::<4>().unwrap();
+	assert_eq!((count.start(), count.end()), (1, 5));
+	assert_eq!(writer.written(), &[1, 0, 0, 0, 0]);
+	for value in [10u32, 20_000, 3] {
+		writer.write(value).unwrap();
+	}
+	writer.fill(count, 3u32).unwrap();
+	// A value too wide for the slot fails and leaves it intact.
+	let small = writer.reserve::<1>().unwrap();
+	assert_eq!(
+		writer.fill(small, 200u32),
+		Err(Error::BufferTooSmall {
+			needed: 2,
+			available: 1
+		})
+	);
+	writer.fill(small, 99u32).unwrap();
+	let len = writer.finish();
+
+	let mut reader = vlen::Reader::new(&buf[..len]);
+	assert_eq!(reader.read::<u8>(), Ok(1));
+	let count = reader.read::<u32>().unwrap();
+	assert_eq!(reader.position(), 5);
+	for expected in [10u32, 20_000, 3].into_iter().take(count as usize) {
+		assert_eq!(reader.read::<u32>(), Ok(expected));
+	}
+	assert_eq!(reader.read::<u32>(), Ok(99));
+	assert_eq!(reader.finish(), Ok(()));
+}
+
+#[test]
+fn writer_reserve_reports_out_of_space() {
+	let mut buf = [0u8; 3];
+	let mut writer = vlen::Writer::new(&mut buf);
+	writer.write(5u8).unwrap();
+	assert_eq!(
+		writer.reserve::<4>(),
+		Err(Error::BufferTooSmall {
+			needed: 4,
+			available: 2
+		})
+	);
+	assert_eq!(writer.position(), 1);
+	let slot = writer.reserve::<2>().unwrap();
+	assert_eq!(writer.remaining(), 0);
+
+	// A slot from a longer buffer is rejected rather than panicking.
+	let mut short = [0u8; 2];
+	let mut other = vlen::Writer::new(&mut short);
+	assert_eq!(
+		other.fill(slot, 1u8),
+		Err(Error::BufferTooSmall {
+			needed: 3,
+			available: 2
+		})
+	);
+}

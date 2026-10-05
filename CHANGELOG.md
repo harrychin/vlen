@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- `encode_padded`: writes a value into exactly `N` bytes, padding it to
+  an over-long encoding when its canonical form is shorter, so a slot
+  reserved before its value is known (a length prefix written after
+  its payload) can be filled without hand-rolling the wire format.
+  Every decoder for the type accepts the result; canonical decoding
+  rejects it unless `N` is the canonical length. Widths beyond what
+  the type can decode are a compile-time error.
+- `Writer::reserve` and `Writer::fill`, with the `Slot` handle they
+  share: reserve a zeroed fixed-width slot in a cursor and fill it
+  later.
+
 ### Changed
 
 - The specialized bulk encoders (`bulk_encode_u32`, `_u64`, `_i32`,
