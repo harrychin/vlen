@@ -65,6 +65,22 @@
   values 1.2x; runs are unchanged within noise. The specialized `u32`
   encoders now match or beat the generic encoder on every distribution
   measured.
+- The specialized bulk decoders decode a window that holds no run as
+  eight scalar decodes written out in sequence. The loop they replace
+  mispredicted its exit once per window on unpredictable sizes.
+  Interleaved sizes decode 1.2-1.45x faster on a repeating mix,
+  ~1.1-1.25x on choppy delta streams, and up to 1.15x on random sizes,
+  which brings the specialized decoders level with or ahead of the
+  generic ones everywhere but randomly interleaved sizes. Runs are
+  unchanged within noise, except one-byte runs at x86-64-v1, which
+  measured 3-20% slower (about 0.02 ns per value).
+- The run iterators (`decode_iter_u32`, `_u64`, `_i32`, `_i64`) buffer
+  eight values at a time between runs wherever eight must exist,
+  instead of looking for a run again after every value: 1.4-2.2x
+  faster on repeating mixes, up to 1.5x on random sizes, 1.2-1.5x on
+  choppy delta streams, and 1.3-1.75x on interleaved wide `u64`
+  values. They now beat the generic `decode_iter` on every
+  distribution measured.
 - The `alloc` `Vec` helpers now use the run fast paths for `u32`,
   `u64`, `i32`, and `i64`, and `bulk_encode_append` (which
   `bulk_encode_to_vec` now builds on) encodes in bounded chunks into

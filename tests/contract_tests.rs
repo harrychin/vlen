@@ -1335,6 +1335,43 @@ fn run_paths_reject_a_window_broken_at_any_position() {
 }
 
 #[test]
+fn run_iterators_match_generic_around_errors_in_mixed_windows() {
+	// Sizes cycle through five classes, so no window is a run and the
+	// iterators buffer eight values at a time wherever enough bytes
+	// remain. An invalid byte at every position and a cut at every
+	// length put errors and the end of input in each lane of those
+	// windows, and on either side of the room they need.
+	let cycle: [u64; 5] = [0x05, 0x1234, 0x5_4321, 0x123_4567, 0x9876_5432];
+	let values: Vec<u64> = (0..48).map(|i| cycle[i % 5]).collect();
+	let mut buf = vec![0u8; values.len() * 9];
+	let len = bulk_encode(&mut buf, &values).unwrap();
+	let encoded = &buf[..len];
+
+	fn check(bytes: &[u8]) {
+		macro_rules! same {
+			($t:ty, $iter:path) => {
+				assert_eq!(
+					$iter(bytes).collect::<Vec<_>>(),
+					decode_iter::<$t>(bytes).collect::<Vec<_>>()
+				);
+			};
+		}
+		same!(u32, vlen::decode_iter_u32);
+		same!(u64, vlen::decode_iter_u64);
+		same!(i32, vlen::decode_iter_i32);
+		same!(i64, vlen::decode_iter_i64);
+	}
+	for pos in 0..len {
+		let mut corrupt = encoded.to_vec();
+		corrupt[pos] = 0xFF;
+		check(&corrupt);
+	}
+	for cut in 0..=len {
+		check(&encoded[..cut]);
+	}
+}
+
+#[test]
 fn byte_array_codecs_round_trip_every_value() {
 	for value in 0..=u8::MAX {
 		let mut buf = [0u8; 2];

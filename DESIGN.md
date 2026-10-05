@@ -189,21 +189,49 @@ hardware). "All n-byte" draws values uniformly across that size class:
 | all four-byte                   | **~2x faster**                | **~2.3x faster**              |
 | all five-byte                   | **~2.4x faster**              | **~1.3x faster**              |
 | `u64`, all six- to nine-byte    | **~2-2.4x faster**            | **~1.3x faster**              |
-| mixed / random sizes            | ~1.1-1.2x faster              | ~1.3-1.4x slower              |
-| `u64`, random six- to nine-byte | ~1.15x slower                 | ~1.2x slower                  |
+| mixed sizes, repeating pattern  | ~1.1-1.4x faster              | ~1.1x faster                  |
+| random sizes                    | ~1.1-1.2x faster              | ~1.2-1.35x slower             |
+| `u64`, random six- to nine-byte | ~1.1-1.2x faster              | ~1.2x slower                  |
 
 Prefer the specialized functions whenever the data has runs of
-similarly-sized values; only interleaved sizes favor the generic
-decoders. On the encode side the branch-free mixed windows closed that
-gap; on the decode side it remains, because a decoder cannot know
-where the next value starts without reading the current one's prefix.
-Ways of closing it that were measured and dropped, because each bought
-mixed-data speed with run speed: a branch-free pre-test of every
-decode run class (random sizes ~8% faster, runs 12-19% slower), and,
-before the branch-free windows, one table-driven encode gate for all
-classes (runs 21-42% slower) and a min/max test over the window (runs
-1.4-2.5x slower). The `alloc` `Vec` helpers take the specialized paths for
-`u32`, `u64`, `i32`, and `i64`.
+similarly-sized values; only randomly interleaved sizes favor the
+generic decoders, and only modestly. A window that holds no run
+decodes its eight values with the scalar decoder, written out in
+sequence: a loop over them mispredicted its exit once per window when
+sizes were unpredictable, which cost the specialized decoders up to
+1.45x on interleaved sizes (1.1-1.15x on random ones). The run
+iterators buffer eight such values at a time wherever eight must
+exist, and now beat the generic `decode_iter` on every distribution
+measured. The remaining gap on random sizes is
+the run check itself, because a decoder cannot know where the next
+value starts without reading the current one's prefix. Ways of closing
+it that were measured and dropped, because each bought mixed-data speed
+with run speed or bought nothing:
+
+- a branch-free pre-test of every decode run class (random sizes ~8%
+  faster, runs 12-19% slower);
+- rationing run checks after consecutive misses (random sizes ~15%
+  faster to encode and up to ~8% to decode, runs 12-26% slower; in the
+  iterators it also skipped the runs that follow a spike in a delta
+  stream);
+- whole-word class tests in place of the first-byte dispatch (no gain);
+- before the branch-free windows, one table-driven encode gate for all
+  classes (runs 21-42% slower) and a min/max test over the window (runs
+  1.4-2.5x slower).
+
+The `alloc` `Vec` helpers take the specialized paths for `u32`, `u64`,
+`i32`, and `i64`.
+
+These tables time 1,024 values, and a benchmark that repeats the same
+1,024 values lets the branch predictor learn their sizes: random
+sizes there cost about 1.5 ns per value, mispredicting far less than
+a real stream would. Over 65,536 values with sizes drawn from a strong
+generator, which it cannot learn, generic encoding and decoding both
+cost 6-8 ns per value. The branch-free specialized encoder stays near
+1.8 ns there, about 3.7x faster than generic, and the specialized
+decoders run even with generic (0.96-1.04x). The criterion benches and
+the README comparison use 1,024 values, so their random-size rows
+describe the learned case.
 
 The criterion benches in `benches/bulk.rs` are sensitive to code
 layout on the generic side: the same generic encode has measured

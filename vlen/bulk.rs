@@ -8,10 +8,11 @@
 //! encodings several values at a time; they are portable safe Rust,
 //! active on every architecture. Prefer them whenever the data has
 //! runs of similarly-sized values (the signed variants shine on
-//! delta-encoded streams). Windows that are not runs encode
-//! branch-free, so the specialized encoders also lead on interleaved
-//! sizes; there the generic decoders are about 1.3x faster, because
-//! they skip the run detection.
+//! delta-encoded streams). On interleaved sizes the specialized
+//! encoders still lead, because windows that are not runs encode
+//! branch-free, and the specialized decoders run about even with the
+//! generic ones: from about 1.1x faster to about 1.3x slower,
+//! depending on the mix.
 
 use crate::decode::Decode;
 use crate::encode::Encode;
@@ -598,6 +599,33 @@ fn encode_mixed_window_u64(
 	Some(offset + o)
 }
 
+/// Decodes the eight values of a window that holds no run, one at a
+/// time. Written out rather than looped: when sizes are unpredictable,
+/// a loop's exit after the eighth value mispredicts once per window.
+#[inline(always)]
+fn decode_window<T: Decode>(
+	buf: &[u8],
+	mut offset: usize,
+	slots: &mut [T; 8],
+) -> Result<usize> {
+	macro_rules! decode_into {
+		($k:literal) => {{
+			let (value, len) = T::decode(&buf[offset..])?;
+			slots[$k] = value;
+			offset += len;
+		}};
+	}
+	decode_into!(0);
+	decode_into!(1);
+	decode_into!(2);
+	decode_into!(3);
+	decode_into!(4);
+	decode_into!(5);
+	decode_into!(6);
+	decode_into!(7);
+	Ok(offset)
+}
+
 /// Generates the specialized bulk codec for one unsigned width on top
 /// of its window run functions.
 macro_rules! bulk_unsigned {
@@ -658,11 +686,7 @@ macro_rules! bulk_unsigned {
 					// No run at this position: decode the next eight
 					// values one at a time so the failed checks are
 					// amortized across eight values.
-					for slot in slots {
-						let (value, len) = <$ut>::decode(&buf[offset..])?;
-						*slot = value;
-						offset += len;
-					}
+					offset = decode_window(buf, offset, slots)?;
 					i += 8;
 					continue;
 				}
@@ -783,11 +807,9 @@ macro_rules! bulk_signed {
 						i += n;
 						continue;
 					}
-					for slot in out[i..i + 8].iter_mut() {
-						let (value, len) = <$it>::decode(&buf[offset..])?;
-						*slot = value;
-						offset += len;
-					}
+					let slots: &mut [$it; 8] =
+						(&mut out[i..i + 8]).try_into().unwrap();
+					offset = decode_window(buf, offset, slots)?;
 					i += 8;
 					continue;
 				}
@@ -903,7 +925,8 @@ impl<'a, T: Decode> core::iter::FusedIterator for DecodeIter<'a, T> {}
 /// Generates a run-accelerated decoding iterator for one unsigned
 /// width: an internal window of up to eight values is refilled through
 /// the bulk run fast paths, and `next()` serves from it with an index
-/// bump. Falls back to the checked scalar decoder between runs.
+/// bump. Between runs the window holds eight values decoded one at a
+/// time, or a single value near the end of the input or an error.
 macro_rules! run_iter {
 	(
 		$(#[$fn_docs:meta])* $fn_name:ident,
@@ -954,6 +977,21 @@ macro_rules! run_iter {
 					self.head = 1;
 					self.len = n as u8;
 					return Some(Ok(self.pending[0]));
+				}
+				// No run here. With room for eight encodings of any
+				// size, eight values remain: buffer them in one go.
+				let room = 8 * <$ut as Decode>::MAX_ENCODED_SIZE;
+				if self.buf.len() - self.offset >= room {
+					if let Ok(new_offset) =
+						decode_window(self.buf, self.offset, &mut self.pending)
+					{
+						self.offset = new_offset;
+						self.head = 1;
+						self.len = 8;
+						return Some(Ok(self.pending[0]));
+					}
+					// An error lies within the window: fall through so
+					// the values before it are still served one by one.
 				}
 				match <$ut>::decode(&self.buf[self.offset..]) {
 					Ok((value, len)) => {
@@ -1073,6 +1111,19 @@ macro_rules! run_iter_signed {
 					self.head = 1;
 					self.len = n as u8;
 					return Some(Ok(self.pending[0]));
+				}
+				// As in the unsigned iterator: buffer eight values
+				// where they must exist, else serve one.
+				let room = 8 * <$it as Decode>::MAX_ENCODED_SIZE;
+				if self.buf.len() - self.offset >= room {
+					if let Ok(new_offset) =
+						decode_window(self.buf, self.offset, &mut self.pending)
+					{
+						self.offset = new_offset;
+						self.head = 1;
+						self.len = 8;
+						return Some(Ok(self.pending[0]));
+					}
 				}
 				match <$it>::decode(&self.buf[self.offset..]) {
 					Ok((value, len)) => {
