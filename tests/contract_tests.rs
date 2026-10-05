@@ -1282,3 +1282,179 @@ fn bulk_decode_values_reports_the_iterators_error() {
 		check!(i64);
 	}
 }
+
+#[test]
+fn run_paths_reject_a_window_broken_at_any_position() {
+	// Eight equal-size values with one of another size at each interior
+	// position, so every run path and kernel must notice the break in
+	// whichever lane it falls; trailing values give the wider windows
+	// room to load.
+	let classes: [u64; 6] =
+		[0x05, 0x1234, 0x5_4321, 0x123_4567, 0x9876_5432, 1 << 41];
+	for &member in &classes {
+		for &intruder in &classes {
+			if intruder == member {
+				continue;
+			}
+			for pos in 1..8 {
+				let mut values = vec![member; 8];
+				values[pos] = intruder;
+				values.extend([member; 16]);
+				let mut buf = vec![0u8; values.len() * 9];
+				let len = bulk_encode(&mut buf, &values).unwrap();
+				let encoded = &buf[..len];
+
+				let mut generic = vec![0u64; values.len()];
+				bulk_decode(encoded, &mut generic).unwrap();
+				let mut specialized = vec![0u64; values.len()];
+				assert_eq!(bulk_decode_u64(encoded, &mut specialized), Ok(len));
+				assert_eq!(specialized, generic);
+				assert_eq!(
+					vlen::decode_iter_u64(encoded)
+						.collect::<vlen::Result<Vec<_>>>(),
+					Ok(values.clone())
+				);
+
+				if let Ok(narrow) = values
+					.iter()
+					.map(|&v| u32::try_from(v))
+					.collect::<Result<Vec<u32>, _>>()
+				{
+					let mut buf = vec![0u8; narrow.len() * 5];
+					let len = bulk_encode(&mut buf, &narrow).unwrap();
+					let mut decoded = vec![0u32; narrow.len()];
+					assert_eq!(
+						bulk_decode_u32(&buf[..len], &mut decoded),
+						Ok(len)
+					);
+					assert_eq!(decoded, narrow);
+				}
+			}
+		}
+	}
+}
+
+#[test]
+fn byte_array_codecs_round_trip_every_value() {
+	for value in 0..=u8::MAX {
+		let mut buf = [0u8; 2];
+		let len = vlen::encode_u8(&mut buf, value);
+		assert_eq!(vlen::decode_u8(&buf), (value, len));
+		assert_eq!(u8::decode(&buf[..len]), Ok((value, len)));
+
+		let signed = value as i8;
+		let len = vlen::encode_i8(&mut buf, signed);
+		assert_eq!(vlen::decode_i8(&buf), (signed, len));
+	}
+	// The two-byte binary form is an accepted over-long encoding.
+	assert_eq!(vlen::decode_u8(&[0xF0, 0xC8]), (0xC8, 2));
+}
+
+#[test]
+fn small_array_decoders_bound_invalid_prefixes() {
+	// The array decoders trust their input but must stay memory-safe and
+	// never report more than the array holds, whatever the first byte.
+	for b0 in 0..=u8::MAX {
+		assert!(vlen::decode_u8(&[b0, 0xFF]).1 <= 2);
+		assert!(vlen::decode_i8(&[b0, 0xFF]).1 <= 2);
+		assert!(vlen::decode_u16(&[b0, 0xFF, 0xFF]).1 <= 3);
+		assert!(vlen::decode_i16(&[b0, 0xFF, 0xFF]).1 <= 3);
+	}
+	// The checked decoders reject the same prefixes.
+	assert_eq!(
+		u8::decode(&[0xC5, 0, 0]),
+		Err(Error::InvalidPrefix { prefix: 0xC5 })
+	);
+	assert_eq!(
+		u16::decode(&[0xE5, 0, 0, 0]),
+		Err(Error::InvalidPrefix { prefix: 0xE5 })
+	);
+}
+
+#[test]
+fn cursor_and_iterator_positions_track_consumption() {
+	let bytes = [0x05, 0x85, 0x01, 0x07];
+	let mut reader = vlen::Reader::new(&bytes);
+	assert_eq!(reader.remaining(), 4);
+	reader.read::<u32>().unwrap();
+	reader.read::<u32>().unwrap();
+	assert_eq!(reader.remaining(), 1);
+	assert_eq!(reader.remaining_bytes(), &[0x07]);
+
+	let mut iter = decode_iter::<u32>(&bytes);
+	assert_eq!(iter.offset(), 0);
+	iter.next();
+	iter.next();
+	assert_eq!(iter.offset(), 3);
+}
+
+#[test]
+fn default_canonical_check_compares_lengths() {
+	// A downstream codec that keeps the default is_canonical_encoding:
+	// one byte per value, with a two-byte escape for values over 0x7F.
+	#[derive(Clone, Copy, Debug, PartialEq)]
+	struct Escaped(u8);
+	impl Encode for Escaped {
+		const MAX_ENCODED_SIZE: usize = 2;
+
+		fn encoded_size(self) -> usize {
+			if self.0 < 0x80 { 1 } else { 2 }
+		}
+
+		fn encode(self, buf: &mut [u8]) -> vlen::Result<usize> {
+			let needed = self.encoded_size();
+			let available = buf.len();
+			let dst = buf
+				.get_mut(..needed)
+				.ok_or(Error::BufferTooSmall { needed, available })?;
+			if needed == 1 {
+				dst[0] = self.0;
+			} else {
+				dst.copy_from_slice(&[0xFF, self.0]);
+			}
+			Ok(needed)
+		}
+	}
+	impl Decode for Escaped {
+		const MAX_ENCODED_SIZE: usize = 2;
+
+		fn decode(buf: &[u8]) -> vlen::Result<(Self, usize)> {
+			match buf {
+				[0xFF, value, ..] => Ok((Escaped(*value), 2)),
+				[value, ..] => Ok((Escaped(*value), 1)),
+				[] => Err(Error::BufferTooSmall {
+					needed: 1,
+					available: 0,
+				}),
+			}
+		}
+	}
+
+	assert_eq!(
+		vlen::decode_canonical::<Escaped>(&[0x05]),
+		Ok((Escaped(5), 1))
+	);
+	assert!(matches!(
+		vlen::decode_canonical::<Escaped>(&[0xFF, 0x05]),
+		Err(StrictError::NonCanonical {
+			encoded_len: 2,
+			canonical_len: 1
+		})
+	));
+}
+
+#[test]
+fn every_error_variant_displays() {
+	let messages = [
+		Error::BufferTooSmall {
+			needed: 3,
+			available: 1,
+		}
+		.to_string(),
+		Error::InvalidPrefix { prefix: 0xF9 }.to_string(),
+		Error::Overflow.to_string(),
+	];
+	assert_eq!(messages[0], "buffer too small: needed 3 bytes, had 1");
+	assert!(messages[1].contains("0xF9"));
+	assert_eq!(messages[2], "encoded value does not fit in the target type");
+}
