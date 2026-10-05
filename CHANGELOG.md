@@ -27,6 +27,16 @@
   (two-byte 1.84 -> 0.49 µs per 1,024 values, five-byte 2.88 ->
   0.65 µs on x86_64); clustered runs are 1.2-1.3x faster at two and
   three bytes and ~10% slower at four. Output bytes are unchanged.
+- `bulk_encode_u64` and `bulk_encode_i64` now have encode runs for the
+  six- to nine-byte binary length-prefix classes (values from 2^32),
+  which decoding already had. Same-size streams of large values -
+  nanosecond timestamps, 64-bit IDs and hashes - encode 3.6-4.4x
+  faster (nine-byte 3.35 -> 0.79 µs per 1,024 values on x86_64),
+  where the specialized encoder previously trailed the generic one
+  by ~1.4x; mixed wide sizes gain ~1.2x. Mixed-size `u64` streams of
+  values below 2^28 measure ~9% slower, apparently from code layout:
+  no window there reaches the new path. `u32` and `i32` are
+  unaffected.
 
 ## 0.4.6
 

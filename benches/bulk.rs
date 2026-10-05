@@ -110,16 +110,54 @@ fn bench_bulk_i64_deltas(c: &mut Criterion) {
 	}
 }
 
+/// Values past `u32::MAX`, in the binary length-prefix classes: uniform
+/// within one class, clustered nanosecond timestamps, and sizes drawn
+/// unpredictably from all four wide classes.
+fn values_u64(kind: &str) -> Vec<u64> {
+	(0..N as u32)
+		.map(|i| {
+			let x = (xorshift(2 * i) as u64) << 32 | xorshift(2 * i + 1) as u64;
+			match kind {
+				"six_byte_uniform" => (1 << 32) + x % ((1 << 40) - (1 << 32)),
+				"eight_byte_uniform" => (1 << 48) + x % ((1 << 56) - (1 << 48)),
+				"nine_byte_uniform" => {
+					(1 << 56) + x % (1u64 << 56).wrapping_neg()
+				},
+				"nanos" => 1_700_000_000_000_000_000 + i as u64 * 1_000_003,
+				"wide_random" => {
+					let class = 4 + (x % 4) as u32;
+					(1 << (8 * class)) | (x >> (64 - 8 * class))
+				},
+				_ => unreachable!("unknown u64 distribution {kind}"),
+			}
+		})
+		.collect()
+}
+
 fn bench_bulk_u64(c: &mut Criterion) {
-	for kind in ["small", "two_byte", "two_byte_uniform", "random"] {
-		let values: Vec<u64> =
-			values(kind).into_iter().map(|v| v as u64).collect();
+	let narrow = ["small", "two_byte", "two_byte_uniform", "random"]
+		.map(|kind| (kind, values(kind).into_iter().map(u64::from).collect()));
+	let wide = [
+		"six_byte_uniform",
+		"eight_byte_uniform",
+		"nine_byte_uniform",
+		"nanos",
+		"wide_random",
+	]
+	.map(|kind| (kind, values_u64(kind)));
+	for (kind, values) in narrow.into_iter().chain(wide) {
+		let values: Vec<u64> = values;
 		let mut buf = vec![0u8; N * 9];
 
 		c.bench_function(&format!("bulk_encode_u64/{kind}"), |b| {
 			b.iter(|| {
 				bulk_encode_u64(black_box(&mut buf), black_box(&values))
 					.unwrap()
+			})
+		});
+		c.bench_function(&format!("bulk_encode_generic_u64/{kind}"), |b| {
+			b.iter(|| {
+				bulk_encode(black_box(&mut buf), black_box(&values)).unwrap()
 			})
 		});
 

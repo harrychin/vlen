@@ -450,6 +450,50 @@ fn specialized_bulk_encode_handles_class_spanning_windows() {
 }
 
 #[test]
+fn specialized_u64_bulk_encode_handles_wide_class_windows() {
+	// The six- to nine-byte binary length-prefix classes, spanned and
+	// with interior outliers on both sides, as for the narrower classes.
+	let mut values = Vec::new();
+	for len in 6..=9u32 {
+		let lo = 1u64 << (8 * (len - 2));
+		let hi = u64::MAX >> (8 * (9 - len));
+		let mid = lo + (hi - lo) / 2;
+		let window = [lo, hi, mid, mid + 1, lo + 1, hi - 1, mid - 1, hi];
+		values.extend(window);
+		for pos in 1..7 {
+			let mut outlier = window;
+			outlier[pos] = lo - 1;
+			values.extend(outlier);
+			if let Some(above) = hi.checked_add(1) {
+				outlier[pos] = above;
+				values.extend(outlier);
+			}
+		}
+	}
+
+	let mut generic = vec![0u8; values.len() * 9];
+	let generic_len = bulk_encode(&mut generic, &values).unwrap();
+	let generic = &generic[..generic_len];
+
+	let mut specialized = vec![0u8; values.len() * 9];
+	let len = bulk_encode_u64(&mut specialized, &values).unwrap();
+	assert_eq!(&specialized[..len], generic);
+
+	let signed: Vec<i64> = values
+		.iter()
+		.map(|&z| ((z >> 1) as i64) ^ -((z & 1) as i64))
+		.collect();
+	let len = vlen::bulk_encode_i64(&mut specialized, &signed).unwrap();
+	assert_eq!(&specialized[..len], generic);
+
+	// An exactly-sized buffer leaves the final windows no scratch room,
+	// so they must fall back and still produce the same bytes.
+	let mut exact = vec![0u8; generic_len];
+	assert_eq!(bulk_encode_u64(&mut exact, &values), Ok(generic_len));
+	assert_eq!(&exact[..], generic);
+}
+
+#[test]
 fn two_byte_run_decode_rejects_invalid_interior() {
 	// A stream that starts like a two-byte run but is truncated inside
 	// a later value must error, not desynchronize.

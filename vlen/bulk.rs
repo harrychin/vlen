@@ -143,11 +143,12 @@ fn four_byte_lanes(bytes: &[u8; 16], lanes: &mut [u32; 4]) {
 /// branching: one- and two-byte runs move through SWAR lanes, and
 /// three- to five-byte runs use class-known constructions — a single
 /// full-width store or masked load per value with no length
-/// computation at all. Windows without a run return `None` and the
-/// caller falls back to the branchy scalar codec, which branch
-/// prediction serves best.
+/// computation at all. Widths with longer encodings pass `$try_wide`
+/// to encode the remaining binary length-prefix classes the same way.
+/// Windows without a run return `None` and the caller falls back to
+/// the branchy scalar codec, which branch prediction serves best.
 macro_rules! window_run_fns {
-	($try_enc:ident, $try_dec:ident, $ut:ident) => {
+	($try_enc:ident, $try_dec:ident, $ut:ident $(, $try_wide:ident)?) => {
 		/// Attempts the run fast paths on one eight-value window.
 		/// Returns the new byte offset after encoding all eight, or
 		/// `None` when the window holds no run (or the output lacks
@@ -252,6 +253,7 @@ macro_rules! window_run_fns {
 						}
 						return Some(offset + 5 * 8);
 					},
+					$(len @ 6..=9 => return $try_wide(buf, offset, chunk, len),)?
 					_ => {},
 				}
 			}
@@ -413,7 +415,57 @@ macro_rules! window_run_fns {
 }
 
 window_run_fns!(try_encode_run_u32, try_decode_run_u32, u32);
-window_run_fns!(try_encode_run_u64, try_decode_run_u64, u64);
+window_run_fns!(
+	try_encode_run_u64,
+	try_decode_run_u64,
+	u64,
+	try_encode_wide_run_u64
+);
+
+/// Encodes a window of `u64` values that all fall in one binary
+/// length-prefix class of six to nine bytes, or returns `None`.
+#[inline(always)]
+fn try_encode_wide_run_u64(
+	buf: &mut [u8],
+	offset: usize,
+	chunk: &[u64; 8],
+	len: usize,
+) -> Option<usize> {
+	match len {
+		6 => encode_wide_run::<6>(buf, offset, chunk),
+		7 => encode_wide_run::<7>(buf, offset, chunk),
+		8 => encode_wide_run::<8>(buf, offset, chunk),
+		9 => encode_wide_run::<9>(buf, offset, chunk),
+		_ => None,
+	}
+}
+
+/// One `LEN`-byte class: a prefix byte and a full eight-byte payload
+/// store per value at a constant `LEN`-byte stride, so each store
+/// overwrites the previous value's scratch bytes.
+#[inline(always)]
+fn encode_wide_run<const LEN: usize>(
+	buf: &mut [u8],
+	offset: usize,
+	chunk: &[u64; 8],
+) -> Option<usize> {
+	// The class is [2^(8 * (LEN - 2)), 2^(8 * (LEN - 1))).
+	let lo = 1u64 << (8 * (LEN - 2));
+	let width = (u64::MAX >> (8 * (9 - LEN))) - lo;
+	if !chunk
+		.iter()
+		.fold(true, |acc, &v| acc & (v.wrapping_sub(lo) <= width))
+	{
+		return None;
+	}
+	let dst = buf.get_mut(offset..offset + 7 * LEN + 9)?;
+	for (i, &v) in chunk.iter().enumerate() {
+		let o = i * LEN;
+		dst[o] = 0xF0 | (LEN - 2) as u8;
+		dst[o + 1..o + 9].copy_from_slice(&v.to_le_bytes());
+	}
+	Some(offset + 8 * LEN)
+}
 
 /// Generates the specialized bulk codec for one unsigned width on top
 /// of its window run functions.

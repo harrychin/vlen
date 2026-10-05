@@ -101,7 +101,9 @@ per-value length arithmetic entirely:
   a `u64` word); two-byte runs reassemble four values inside 16-bit
   lanes at once.
 - Three- to five-byte encode runs emit one class-known full-width
-  store per value; four-byte decode runs use 32-bit lanes, and
+  store per value, and `u64` six- to nine-byte encode runs a prefix
+  byte plus one eight-byte store; four-byte decode runs use 32-bit
+  lanes, and
   binary-length-prefix decode runs (five to nine bytes) use pairs of
   plain masked loads.
 - Three-byte decode runs deliberately stay on the branchy scalar path,
