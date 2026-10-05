@@ -56,10 +56,10 @@ and the chart all use vlen's validating API. The single-value rows use
 its infallible array API; through the validating slice API — the same
 work the other crates always do — vlen measures 0.77 ns decode /
 1.58 ns encode, level with prost's validating decode (0.80 ns).
-stream-vbyte runs its scalar kernels (its SSE4.1 decoder is faster on
-x86_64) and is a control-stream format rather than a self-delimiting
-varint; `prost` and `vint64` are 64-bit codecs fed the same values
-widened to `u64`.
+stream-vbyte runs its scalar kernels and is a control-stream format
+rather than a self-delimiting varint (its x86 SIMD kernels, below, are
+much faster); `prost` and `vint64` are 64-bit codecs fed the same
+values widened to `u64`.
 
 Compression matches LEB128 byte-for-byte below 2^28 — where most
 varint data lives — and caps at 9 bytes for `u64`, where LEB128 needs
@@ -175,10 +175,14 @@ semver checks, and `no_std` builds gating every change.
 
 If your workload is purely columnar bulk `u32` compression — no
 streaming, no self-delimiting values — a control-stream format like
-`stream-vbyte` encodes unpredictably interleaved sizes faster (its
+`stream-vbyte` handles unpredictably interleaved sizes faster (its
 lengths live in a separate control stream, so per-value size changes
-cost it nothing). vlen is built for the general case: self-delimiting
-streams you can read value by value.
+cost it nothing). On x86_64 its SIMD kernels (SSSE3 decode, SSE4.1
+encode; nightly-only in stream-vbyte 0.4) decoded 1,024 random-size
+`u32` values about 6x faster than vlen and encoded them about 3x
+faster in our measurement, while vlen stayed ahead on small values.
+vlen is built for the general case: self-delimiting streams you can
+read value by value.
 
 ## Learn more
 
