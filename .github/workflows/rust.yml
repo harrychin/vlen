@@ -65,6 +65,18 @@ jobs:
       - name: Build with all features
         run: cargo build --target thumbv7em-none-eabi --features full
 
+  size:
+    name: Code size (thumbv7em, opt-level z)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+          components: llvm-tools
+      - name: Check code size, memcpy imports, and panic paths
+        run: ci/size-check.sh
+
   docs:
     name: Docs (docs.rs configuration)
     runs-on: ubuntu-latest
