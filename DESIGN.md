@@ -105,8 +105,9 @@ per-value length arithmetic entirely:
   byte plus one eight-byte store; four-byte decode runs use 32-bit
   lanes, and binary-length-prefix decode runs (five to nine bytes) use
   pairs of plain masked loads.
-- Three-byte decode runs deliberately stay on the branchy scalar path,
-  which measured faster than their SWAR lane math.
+- Three-byte decode runs stay on the branchy scalar path, which
+  measured faster than their SWAR lane math, unless the SSSE3 kernel
+  below is compiled in.
 - The window checks are gated so that streams with no runs pay only a
   compare or two per eight values.
 
@@ -133,6 +134,32 @@ references, and the full test suite runs with the feature on and off,
 on both architectures, in CI. Default builds remain free of unsafe
 code.
 
+#### x86 beyond SSE2
+
+Builds that target x86-64-v2 or newer (`-C target-cpu=x86-64-v2`,
+`x86-64-v3`, `native`) also get an SSSE3 kernel for three-byte decode
+runs: one `pshufb` per sixteen bytes spreads each encoding into its
+own 32-bit lane, a single compare checks all eight prefixes, and two
+shifts rebuild the values. It is selected by `cfg(target_feature)`, so
+there is still no runtime detection — a binary built for it requires
+it — and an x86-64-v1 build compiles exactly the code it did before.
+Measured on the same VM, three-byte runs decode 4.6x faster at
+x86-64-v2 and 3.2-3.7x at x86-64-v3, with other distributions
+unchanged at v2. At v3, specialized decoding of interleaved sizes
+measured 9-23% slower with the kernel present, from code layout
+rather than work done (the kernel never runs there); the generic
+decoder is the faster choice for such data either way.
+
+Wider kernels were measured and not kept. With eight-value windows, an
+AVX2 kernel can only help four-byte runs (eight per 32-byte step
+instead of four per sixteen): inlined, it decoded them 1.8x faster but
+slowed interleaved streams by about 24%; kept out of line, the call
+cost erased the gain. AVX-512 has no lane width left to fill in an
+eight-value window. Both levels still build and pass the full suite,
+and CI tests x86-64-v2, v3, and (where the runner has AVX-512) v4.
+LLVM's own autovectorization of the encode paths picks up SSE4.1 and
+AVX2 without explicit kernels.
+
 ### Specialized vs generic bulk functions
 
 Indicative numbers for 1,024 values (x86_64, 4-vCPU cloud VM; each
@@ -152,7 +179,12 @@ hardware). "All n-byte" draws values uniformly across that size class:
 
 Prefer the specialized functions whenever the data has runs of
 similarly-sized values; only interleaved sizes favor the generic
-functions. The `alloc` `Vec` helpers take the specialized paths for
+functions. Several ways of closing that gap were measured and dropped,
+because each bought mixed-data speed with run speed: a branch-free
+pre-test of every run class (decode random sizes ~8% faster, runs
+12-19% slower), one table-driven gate for all classes (encode runs
+21-42% slower), and a min/max test over the window (encode runs
+1.4-2.5x slower). The `alloc` `Vec` helpers take the specialized paths for
 `u32`, `u64`, `i32`, and `i64`.
 
 The criterion benches in `benches/bulk.rs` are sensitive to code

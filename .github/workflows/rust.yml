@@ -43,6 +43,31 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
+  x86-levels:
+    name: x86-64 v2/v3/v4 (SSSE3 kernel, AVX2/AVX-512 codegen)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test at x86-64-v2 (SSSE3 kernel)
+        run: cargo test --all-features
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=x86-64-v2
+      - name: Test at x86-64-v3 (AVX2)
+        run: cargo test --all-features
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=x86-64-v3
+      - name: Test at x86-64-v4 where the runner has AVX-512
+        run: |
+          if grep -q avx512bw /proc/cpuinfo; then
+            cargo test --all-features
+          else
+            echo "No AVX-512 on this runner; building only."
+            cargo build --all-features --all-targets
+          fi
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=x86-64-v4
+
   miri:
     name: Miri (portable paths and every x86 kernel)
     runs-on: ubuntu-latest

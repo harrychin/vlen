@@ -14,6 +14,19 @@
 - `Writer::reserve` and `Writer::fill`, with the `Slot` handle they
   share: reserve a zeroed fixed-width slot in a cursor and fill it
   later.
+- With the `simd` feature, an SSSE3 kernel for three-byte decode runs
+  in builds targeting x86-64-v2 or newer (`-C target-cpu=x86-64-v2`,
+  `x86-64-v3`, `native`): selected at compile time, so x86-64-v1
+  builds are unchanged. Three-byte runs decode 4.6x faster at v2 and
+  3.2-3.7x at v3; see DESIGN.md for the v3 layout caveat on
+  interleaved sizes and for the AVX2 and AVX-512 kernels that were
+  measured and not kept.
+- CI coverage: Miri over the portable paths and every x86 kernel, the
+  suite at x86-64-v2, v3, and (where available) v4, a Cortex-M
+  code-size check (`ci/size-check.sh`: no `memcpy` import, no panic
+  paths, a byte budget per API surface), and an `encode_arbitrary`
+  fuzz target covering the specialized encoders, the `Vec` helpers,
+  `encode_padded`, and `Writer` slots.
 - `Encode::encode_slice` and (with `alloc`) `Decode::decode_to_vec`:
   provided methods the generic `Vec` helpers go through, so a type
   with a faster bulk codec can supply it. Their defaults are

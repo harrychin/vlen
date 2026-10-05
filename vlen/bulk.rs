@@ -57,6 +57,12 @@ const TWO_BYTE_WANT: u64 = 0x0080_0080_0080_0080;
 /// and 4.
 const FOUR_BYTE_MASK: u64 = 0x0000_00F0_0000_00F0;
 const FOUR_BYTE_WANT: u64 = 0x0000_00E0_0000_00E0;
+/// Three-byte encodings start `110xxxxx`: top three bits of bytes 0,
+/// 3, and 6.
+#[cfg(all(feature = "simd", target_arch = "x86_64", target_feature = "ssse3"))]
+const THREE_BYTE_MASK: u64 = 0x00E0_0000_E000_00E0;
+#[cfg(all(feature = "simd", target_arch = "x86_64", target_feature = "ssse3"))]
+const THREE_BYTE_WANT: u64 = 0x00C0_0000_C000_00C0;
 
 /// Reassembles eight two-byte encodings (sixteen interleaved bytes)
 /// into eight 16-bit value lanes. The caller has already verified the
@@ -263,9 +269,10 @@ macro_rules! window_run_fns {
 		/// Returns how many values were written into `slots` and the
 		/// new byte offset, or `None` when no run starts here (or
 		/// fewer than eight bytes remain) and the caller must decode
-		/// one value at a time. Three-byte runs return `None` on
-		/// purpose: uniform runs predict perfectly, and their SWAR
-		/// lane math costs more than the branchy scalar path.
+		/// one value at a time. Three-byte runs have a run path only
+		/// with the SSSE3 kernel: uniform runs predict perfectly, and
+		/// their SWAR lane math costs more than the branchy scalar
+		/// path.
 		#[inline(always)]
 		fn $try_dec(
 			buf: &[u8],
@@ -405,6 +412,30 @@ macro_rules! window_run_fns {
 						slots[0] = lo & mask;
 						slots[1] = hi & mask;
 						return Some((2, offset + 2 * len));
+					}
+				}
+			}
+			// Eight three-byte encodings, gathered by one byte shuffle
+			// per sixteen bytes once the first three prefixes in this
+			// word rule out most mixed windows. This sits after the
+			// dispatch so builds without the kernel keep its exact
+			// shape, which the hotter classes are sensitive to.
+			#[cfg(all(
+				feature = "simd",
+				target_arch = "x86_64",
+				target_feature = "ssse3"
+			))]
+			if word & THREE_BYTE_MASK == THREE_BYTE_WANT {
+				if let Some(window) = buf.get(offset..offset + 24) {
+					let mut lanes = [0u32; 8];
+					if crate::kernels::three_byte_lanes(
+						window.try_into().unwrap(),
+						&mut lanes,
+					) {
+						for (slot, &lane) in slots.iter_mut().zip(&lanes) {
+							*slot = lane as $ut;
+						}
+						return Some((8, offset + 24));
 					}
 				}
 			}

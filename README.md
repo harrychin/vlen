@@ -164,7 +164,7 @@ errors.
 |---------|------|
 | `alloc` | `Vec` conveniences: `encode_to_vec`/`encode_append`, `bulk_encode_to_vec`/`bulk_encode_append`, and `bulk_decode_values` (run-accelerated for `u32`, `u64`, `i32`, and `i64`) |
 | `serde` | `Vlen*` wrapper types (allocation-free, `no_std`) |
-| `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs; a handful of audited load/store unsafe blocks) |
+| `simd`  | Native NEON/SSE2/wasm-simd128 kernels for the bulk run fast paths (~15-19% faster one-, two-, and four-byte runs), plus an SSSE3 kernel for three-byte runs (3-5x) in builds targeting x86-64-v2 or newer; a handful of audited load/store unsafe blocks |
 | `full`  | Everything above |
 
 MSRV: **1.85**. Tested in CI on x86_64, aarch64, big-endian s390x,
