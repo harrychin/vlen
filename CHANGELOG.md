@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The specialized bulk encoders (`bulk_encode_u32`, `_u64`, `_i32`,
+  `_i64`) now detect every two- to five-byte run. The size-class
+  check or-reduced the window before comparing, which is only exact
+  for power-of-two spans: it rejected ~97% of windows whose values
+  are spread across a class, so on such data the specialized
+  encoders ran slower than the generic `bulk_encode`. Uniformly
+  distributed same-size `u32` streams now encode 2.1-4.4x faster
+  (two-byte 1.84 -> 0.49 µs per 1,024 values, five-byte 2.88 ->
+  0.65 µs on x86_64); clustered runs are 1.2-1.3x faster at two and
+  three bytes and ~10% slower at four. Output bytes are unchanged.
+
 ## 0.4.6
 
 ### Fixed

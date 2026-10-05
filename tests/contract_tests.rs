@@ -390,6 +390,66 @@ fn specialized_u64_bulk_matches_generic_bulk() {
 }
 
 #[test]
+fn specialized_bulk_encode_handles_class_spanning_windows() {
+	// Eight-value windows that span a whole size class, from its floor
+	// to its ceiling, so their offsets from the floor share no common
+	// high bits; and the same windows with one interior value just
+	// outside the class, which must fall back to the scalar path.
+	const CLASSES: [(u32, u32); 4] = [
+		(0x80, 0x3FFF),
+		(0x4000, 0x1F_FFFF),
+		(0x20_0000, 0xFFF_FFFF),
+		(0x1000_0000, u32::MAX),
+	];
+	let mut values = Vec::new();
+	for (lo, hi) in CLASSES {
+		let mid = lo + (hi - lo) / 2;
+		let window = [lo, hi, mid, mid + 1, lo + 1, hi - 1, mid - 1, hi];
+		values.extend(window);
+		for pos in 1..7 {
+			let mut outlier = window;
+			outlier[pos] = lo - 1;
+			values.extend(outlier);
+			if let Some(above) = hi.checked_add(1) {
+				outlier[pos] = above;
+				values.extend(outlier);
+			}
+		}
+	}
+
+	let mut generic = vec![0u8; values.len() * 5];
+	let generic_len = bulk_encode(&mut generic, &values).unwrap();
+	let generic = &generic[..generic_len];
+
+	let mut specialized = vec![0u8; values.len() * 5];
+	let len = bulk_encode_u32(&mut specialized, &values).unwrap();
+	assert_eq!(&specialized[..len], generic);
+
+	let wide: Vec<u64> = values.iter().map(|&v| v as u64).collect();
+	let mut specialized = vec![0u8; wide.len() * 9];
+	let len = bulk_encode_u64(&mut specialized, &wide).unwrap();
+	assert_eq!(&specialized[..len], generic);
+
+	// The signed encoders zigzag into these same unsigned windows.
+	let signed: Vec<i32> = values
+		.iter()
+		.map(|&z| ((z >> 1) as i32) ^ -((z & 1) as i32))
+		.collect();
+	let mut specialized = vec![0u8; signed.len() * 5];
+	let len = vlen::bulk_encode_i32(&mut specialized, &signed).unwrap();
+	assert_eq!(&specialized[..len], generic);
+
+	let signed: Vec<i64> = signed.iter().map(|&v| v as i64).collect();
+	let mut specialized = vec![0u8; signed.len() * 9];
+	let len = vlen::bulk_encode_i64(&mut specialized, &signed).unwrap();
+	assert_eq!(&specialized[..len], generic);
+
+	let mut decoded = vec![0u32; values.len()];
+	assert_eq!(bulk_decode_u32(generic, &mut decoded).unwrap(), generic_len);
+	assert_eq!(decoded, values);
+}
+
+#[test]
 fn two_byte_run_decode_rejects_invalid_interior() {
 	// A stream that starts like a two-byte run but is truncated inside
 	// a later value must error, not desynchronize.

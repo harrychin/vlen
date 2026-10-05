@@ -158,12 +158,17 @@ macro_rules! window_run_fns {
 			chunk: &[$ut; 8],
 		) -> Option<usize> {
 			// Verifies that all eight values sit in the class
-			// `[lo, lo + span)` with one or-reduction: values below
-			// `lo` wrap to huge, values at or beyond the class stay
-			// at `span` or more.
+			// `[lo, lo + span)`: values below `lo` wrap to huge, values
+			// at or beyond the class stay at `span` or more. Each lane
+			// is compared on its own; or-reducing the lanes first is
+			// only exact when `span` is a power of two, and for the
+			// wider classes it rejects nearly every window of
+			// uniformly spread values.
 			#[inline(always)]
 			fn in_class(chunk: &[$ut; 8], lo: $ut, span: $ut) -> bool {
-				chunk.iter().fold(0, |acc, &v| acc | v.wrapping_sub(lo)) < span
+				chunk
+					.iter()
+					.fold(true, |acc, &v| acc & (v.wrapping_sub(lo) < span))
 			}
 
 			// The two hottest classes get dedicated cheap gates;
@@ -171,7 +176,11 @@ macro_rules! window_run_fns {
 			// of the window's first and last values.
 			let first = chunk[0];
 			let last = chunk[7];
-			if (first | last) < 0x80 && in_class(chunk, 0, 0x80) {
+			// The one-byte span is a power of two, so a single
+			// or-reduction is exact here.
+			if (first | last) < 0x80
+				&& chunk.iter().fold(0, |acc, &v| acc | v) < 0x80
+			{
 				// Eight one-byte values become one packed word.
 				let dst = buf.get_mut(offset..offset + 8)?;
 				let mut word = 0u64;
@@ -181,7 +190,7 @@ macro_rules! window_run_fns {
 				dst.copy_from_slice(&word.to_le_bytes());
 				return Some(offset + 8);
 			}
-			if (first.wrapping_sub(0x80) | last.wrapping_sub(0x80)) < 0x3F80
+			if first.wrapping_sub(0x80).max(last.wrapping_sub(0x80)) < 0x3F80
 				&& in_class(chunk, 0x80, 0x3F80)
 			{
 				// Eight two-byte values: each 16-bit lane's
