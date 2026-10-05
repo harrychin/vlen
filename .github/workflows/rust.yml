@@ -130,6 +130,8 @@ jobs:
         run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Fuzz checked decoders
         run: cargo fuzz run decode_arbitrary -- -max_total_time=10
+      - name: Fuzz encoders and padded slots
+        run: cargo fuzz run encode_arbitrary -- -max_total_time=10
       - name: Fuzz serde visitors
         run: cargo fuzz run serde_arbitrary -- -max_total_time=10
 
