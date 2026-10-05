@@ -46,24 +46,29 @@ jobs:
   x86-levels:
     name: x86-64 v2/v3/v4 (SSSE3 kernel, AVX2/AVX-512 codegen)
     runs-on: ubuntu-latest
+    # An explicit --target keeps RUSTFLAGS off build scripts and proc
+    # macros, which run on the runner and would otherwise be compiled
+    # for a CPU level it may not have.
+    env:
+      HOST: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test at x86-64-v2 (SSSE3 kernel)
-        run: cargo test --all-features
+        run: cargo test --all-features --target $HOST
         env:
           RUSTFLAGS: -D warnings -C target-cpu=x86-64-v2
       - name: Test at x86-64-v3 (AVX2)
-        run: cargo test --all-features
+        run: cargo test --all-features --target $HOST
         env:
           RUSTFLAGS: -D warnings -C target-cpu=x86-64-v3
       - name: Test at x86-64-v4 where the runner has AVX-512
         run: |
           if grep -q avx512bw /proc/cpuinfo; then
-            cargo test --all-features
+            cargo test --all-features --target $HOST
           else
             echo "No AVX-512 on this runner; building only."
-            cargo build --all-features --all-targets
+            cargo build --all-features --all-targets --target $HOST
           fi
         env:
           RUSTFLAGS: -D warnings -C target-cpu=x86-64-v4
