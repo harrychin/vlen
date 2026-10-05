@@ -281,6 +281,20 @@ encode_float! {
 ///
 /// Unlike the array-based functions, the buffer only needs room for the
 /// value's actual encoded size, not the type's maximum.
+///
+/// When `buf` is longer than the encoding, bytes past the returned
+/// length may be overwritten with scratch data (the fast path stores
+/// whole words). To patch a value into a larger buffer without touching
+/// what follows it, pass exactly its slot:
+///
+/// ```rust
+/// let mut frame = [0u8; 9];
+/// frame[3..].copy_from_slice(b"abcdef");
+/// let len = vlen::encoded_size(20_000u32); // 3 bytes
+/// vlen::encode(&mut frame[..len], 20_000u32)?;
+/// assert_eq!(&frame[3..], b"abcdef");
+/// # Ok::<(), vlen::Error>(())
+/// ```
 #[inline]
 pub fn encode<T: Encode>(buf: &mut [u8], value: T) -> Result<usize> {
 	value.encode(buf)

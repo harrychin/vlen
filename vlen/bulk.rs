@@ -21,7 +21,9 @@ use crate::error::Result;
 ///
 /// The buffer only needs room for the actual encoded stream; encoding
 /// stops with [`Error::BufferTooSmall`](crate::Error::BufferTooSmall)
-/// if it runs out of space.
+/// if it runs out of space. Bytes past the returned length may be
+/// overwritten with scratch data, here and in the specialized bulk
+/// encoders.
 pub fn bulk_encode<T: Encode>(buf: &mut [u8], values: &[T]) -> Result<usize> {
 	let mut offset = 0;
 	for &value in values {

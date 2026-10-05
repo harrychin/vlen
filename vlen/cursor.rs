@@ -33,7 +33,8 @@ impl<'a> Writer<'a> {
 	///
 	/// On error the position is unchanged, so a failed write can be
 	/// retried into a larger buffer or reported without losing what
-	/// was already written.
+	/// was already written. On success, bytes past the new position
+	/// may be overwritten with scratch data.
 	pub fn write<T: Encode>(&mut self, value: T) -> Result<()> {
 		let len = value.encode(&mut self.buf[self.pos..])?;
 		self.pos += len;
