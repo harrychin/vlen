@@ -55,6 +55,16 @@
   values below 2^28 measure ~9% slower, apparently from code layout:
   no window there reaches the new path. `u32` and `i32` are
   unaffected.
+- The specialized bulk encoders now encode windows that are not runs
+  branch-free: each value's layout comes from a table indexed by its
+  leading zeros, its word is stored whole at the running offset, and
+  the offset advances by its length, so interleaved sizes no longer
+  mispredict. On x86_64, random-size `u32` streams encode 1.37x faster
+  at x86-64-v1 and 1.59x at v3, periodic mixes 1.33x and 1.75x,
+  interleaved wide `u64` sizes 1.34x and 1.59x, and small random `u64`
+  values 1.2x; runs are unchanged within noise. The specialized `u32`
+  encoders now match or beat the generic encoder on every distribution
+  measured.
 - The `alloc` `Vec` helpers now use the run fast paths for `u32`,
   `u64`, `i32`, and `i64`, and `bulk_encode_append` (which
   `bulk_encode_to_vec` now builds on) encodes in bounded chunks into

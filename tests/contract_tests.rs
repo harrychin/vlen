@@ -1458,3 +1458,55 @@ fn every_error_variant_displays() {
 	assert!(messages[1].contains("0xF9"));
 	assert_eq!(messages[2], "encoded value does not fit in the target type");
 }
+
+#[test]
+fn mixed_windows_encode_every_length_in_every_lane() {
+	// The smallest and largest value of every encoded length, so each
+	// table-driven layout and its neighbours' boundaries are covered.
+	let mut boundaries = vec![0u64, 0x7F];
+	for bits in [7u32, 14, 21, 28, 32, 40, 48, 56] {
+		boundaries.push(1 << bits);
+		if let Some(next) = 1u64.checked_shl(bits + 7) {
+			boundaries.push(next.wrapping_sub(1));
+		}
+	}
+	boundaries.extend([u32::MAX as u64, u64::MAX]);
+
+	// Windows of eight mixed sizes, rotated so every value visits every
+	// lane, followed by a tail.
+	let mut values = Vec::new();
+	for start in 0..boundaries.len() {
+		for lane in 0..8 {
+			values.push(boundaries[(start + lane * 3) % boundaries.len()]);
+		}
+	}
+	values.extend([5, 0x1234, u64::MAX]);
+
+	fn check<T: Encode + Copy>(
+		values: &[T],
+		specialized: fn(&mut [u8], &[T]) -> vlen::Result<usize>,
+	) {
+		let mut generic = vec![0u8; values.len() * 9];
+		let len = bulk_encode(&mut generic, values).unwrap();
+		let generic = &generic[..len];
+		// Roomy and exactly sized outputs exercise both the full-width
+		// stores and the per-value fallback near the end.
+		for room in [len, len + 1, len + 8, values.len() * 9 + 16] {
+			let mut out = vec![0xAAu8; room];
+			assert_eq!(specialized(&mut out, values), Ok(len));
+			assert_eq!(&out[..len], generic);
+		}
+	}
+
+	check(&values, bulk_encode_u64);
+	check(
+		&values.iter().map(|&v| v as i64).collect::<Vec<_>>(),
+		vlen::bulk_encode_i64,
+	);
+	let narrow: Vec<u32> = values.iter().map(|&v| v as u32).collect();
+	check(&narrow, bulk_encode_u32);
+	check(
+		&narrow.iter().map(|&v| v as i32).collect::<Vec<_>>(),
+		vlen::bulk_encode_i32,
+	);
+}

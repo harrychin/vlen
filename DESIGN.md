@@ -91,6 +91,11 @@ branchy structure is a measured choice, not a default. Size
 calculations (`encoded_size_*`, `encoded_len`) have no such chain and
 are branch-free, so summing sizes over a slice vectorizes.
 
+Encoding has no chain through memory either: a value's output offset
+waits only on the previous length's addition. So the specialized bulk
+encoders encode windows of mixed sizes branch-free (below), and only
+single-value and generic encoding stay branchy.
+
 ### Bulk run detection
 
 The specialized bulk functions detect runs of equal-length encodings.
@@ -110,6 +115,16 @@ per-value length arithmetic entirely:
   below is compiled in.
 - The window checks are gated so that streams with no runs pay only a
   compare or two per eight values.
+- Encode windows that are not runs go branch-free: a table indexed by
+  each value's leading zeros gives its layout (prefix bits, low-bit
+  mask, shift, and length), the word `prefix | (v & low) | ((v >>
+  shift) << 8)` is stored whole at the running offset, and the offset
+  advances by the length. Interleaved sizes then cost no
+  mispredictions: random-size `u32` streams encode 1.37x faster at
+  x86-64-v1 and 1.59x at v3 than with the per-value fallback. BMI2's
+  `pdep` builds the same word in one instruction and measured ~20%
+  faster at v3, but it is microcoded and very slow on AMD Zen 1 and 2,
+  which also qualify as x86-64-v3, so the table form is used.
 
 ### SIMD: where it helps and where it cannot
 
@@ -174,16 +189,19 @@ hardware). "All n-byte" draws values uniformly across that size class:
 | all four-byte                   | **~2x faster**                | **~2.3x faster**              |
 | all five-byte                   | **~2.4x faster**              | **~1.3x faster**              |
 | `u64`, all six- to nine-byte    | **~2-2.4x faster**            | **~1.3x faster**              |
-| mixed / random sizes            | ~1.2-1.4x slower              | ~1.3-1.4x slower              |
-| `u64`, random six- to nine-byte | ~1.8x slower                  | ~1.2x slower                  |
+| mixed / random sizes            | ~1.1-1.2x faster              | ~1.3-1.4x slower              |
+| `u64`, random six- to nine-byte | ~1.15x slower                 | ~1.2x slower                  |
 
 Prefer the specialized functions whenever the data has runs of
 similarly-sized values; only interleaved sizes favor the generic
-functions. Several ways of closing that gap were measured and dropped,
-because each bought mixed-data speed with run speed: a branch-free
-pre-test of every run class (decode random sizes ~8% faster, runs
-12-19% slower), one table-driven gate for all classes (encode runs
-21-42% slower), and a min/max test over the window (encode runs
+decoders. On the encode side the branch-free mixed windows closed that
+gap; on the decode side it remains, because a decoder cannot know
+where the next value starts without reading the current one's prefix.
+Ways of closing it that were measured and dropped, because each bought
+mixed-data speed with run speed: a branch-free pre-test of every
+decode run class (random sizes ~8% faster, runs 12-19% slower), and,
+before the branch-free windows, one table-driven encode gate for all
+classes (runs 21-42% slower) and a min/max test over the window (runs
 1.4-2.5x slower). The `alloc` `Vec` helpers take the specialized paths for
 `u32`, `u64`, `i32`, and `i64`.
 

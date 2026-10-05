@@ -8,8 +8,10 @@
 //! encodings several values at a time; they are portable safe Rust,
 //! active on every architecture. Prefer them whenever the data has
 //! runs of similarly-sized values (the signed variants shine on
-//! delta-encoded streams); for interleaved sizes the generic functions
-//! are about 1.2-1.4x faster because they skip the run detection.
+//! delta-encoded streams). Windows that are not runs encode
+//! branch-free, so the specialized encoders also lead on interleaved
+//! sizes; there the generic decoders are about 1.3x faster, because
+//! they skip the run detection.
 
 use crate::decode::Decode;
 use crate::encode::Encode;
@@ -497,13 +499,112 @@ fn encode_wide_run<const LEN: usize>(
 	Some(offset + 8 * LEN)
 }
 
+/// How one encoded size lays out a value, as the little-endian word
+/// `prefix | (v & low) | ((v >> shift) << 8)`: the first byte holds the
+/// prefix bits and the value's low bits, and every later byte is the
+/// next eight value bits. Binary length-prefix forms put all value bits
+/// after the prefix byte (`low = 0`, `shift = 0`).
+#[derive(Clone, Copy)]
+struct Layout {
+	prefix: u64,
+	low: u64,
+	shift: u32,
+	len: u8,
+}
+
+/// Each encoded size's layout, indexed by a value's leading zeros
+/// within `width` bits, for a type of at most nine encoded bytes.
+const fn layouts<const N: usize>(width: u32) -> [Layout; N] {
+	let mut table = [Layout {
+		prefix: 0,
+		low: 0,
+		shift: 0,
+		len: 0,
+	}; N];
+	let mut lz = 0;
+	while lz < N {
+		let bits = width - lz as u32;
+		table[lz] = if bits <= 28 {
+			// Prefix varint: len - 1 leading ones and a zero above
+			// 8 - len value bits, then 8 value bits per byte.
+			let len = if bits <= 7 { 1 } else { bits.div_ceil(7) };
+			let low_bits = 8 - len;
+			Layout {
+				prefix: !(0xFF >> (len - 1)) & 0xFF,
+				low: (1 << low_bits) - 1,
+				shift: low_bits,
+				len: len as u8,
+			}
+		} else {
+			let len = bits.div_ceil(8) + 1;
+			Layout {
+				prefix: 0xF0 | (len as u64 - 2),
+				low: 0,
+				shift: 0,
+				len: len as u8,
+			}
+		};
+		lz += 1;
+	}
+	table
+}
+
+const U32_LAYOUTS: [Layout; 33] = layouts(32);
+const U64_LAYOUTS: [Layout; 65] = layouts(64);
+
+/// Encodes a window of eight values of mixed sizes without branching on
+/// any of them: each value's layout comes from a table, its word is
+/// stored whole at the running offset (the next store overwrites the
+/// scratch bytes), and the offset advances by its length. Mixed sizes
+/// would mispredict a per-value branch; this only waits on additions.
+/// Returns `None` when the output lacks room for the full-width stores.
+#[inline(always)]
+fn encode_mixed_window_u32(
+	buf: &mut [u8],
+	offset: usize,
+	chunk: &[u32; 8],
+) -> Option<usize> {
+	let dst = buf.get_mut(offset..offset + 7 * 5 + 8)?;
+	let mut o = 0;
+	for &v in chunk {
+		let layout = U32_LAYOUTS[v.leading_zeros() as usize];
+		let v = v as u64;
+		let word =
+			layout.prefix | (v & layout.low) | ((v >> layout.shift) << 8);
+		dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
+		o += layout.len as usize;
+	}
+	Some(offset + o)
+}
+
+/// The `u64` form of [`encode_mixed_window_u32`]; a nine-byte encoding
+/// also stores the value's top byte after the word.
+#[inline(always)]
+fn encode_mixed_window_u64(
+	buf: &mut [u8],
+	offset: usize,
+	chunk: &[u64; 8],
+) -> Option<usize> {
+	let dst = buf.get_mut(offset..offset + 7 * 9 + 9)?;
+	let mut o = 0;
+	for &v in chunk {
+		let layout = U64_LAYOUTS[v.leading_zeros() as usize];
+		let word =
+			layout.prefix | (v & layout.low) | ((v >> layout.shift) << 8);
+		dst[o..o + 8].copy_from_slice(&word.to_le_bytes());
+		dst[o + 8] = (v >> 56) as u8;
+		o += layout.len as usize;
+	}
+	Some(offset + o)
+}
+
 /// Generates the specialized bulk codec for one unsigned width on top
 /// of its window run functions.
 macro_rules! bulk_unsigned {
 	(
 		$(#[$enc_docs:meta])* $enc_name:ident,
 		$(#[$dec_docs:meta])* $dec_name:ident,
-		$ut:ident, $try_enc:ident, $try_dec:ident
+		$ut:ident, $try_enc:ident, $try_dec:ident, $mixed_enc:ident
 	) => {
 		$(#[$enc_docs])*
 		pub fn $enc_name(buf: &mut [u8], values: &[$ut]) -> Result<usize> {
@@ -518,11 +619,16 @@ macro_rules! bulk_unsigned {
 						i += 8;
 						continue;
 					}
-					// The window mixes size classes: encode it one
-					// value at a time so the failed checks are
-					// amortized across eight values.
-					for &value in chunk {
-						offset += value.encode(&mut buf[offset..])?;
+					// The window mixes size classes: encode it without
+					// branching on sizes, or one value at a time where
+					// the output is too short for full-width stores.
+					if let Some(new_offset) = $mixed_enc(buf, offset, chunk)
+					{
+						offset = new_offset;
+					} else {
+						for &value in chunk {
+							offset += value.encode(&mut buf[offset..])?;
+						}
 					}
 					i += 8;
 					continue;
@@ -584,7 +690,7 @@ bulk_unsigned! {
 	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
 	/// paths for runs of equal-length encodings.
 	bulk_decode_u32,
-	u32, try_encode_run_u32, try_decode_run_u32
+	u32, try_encode_run_u32, try_decode_run_u32, encode_mixed_window_u32
 }
 
 bulk_unsigned! {
@@ -600,7 +706,7 @@ bulk_unsigned! {
 	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
 	/// paths for runs of equal-length encodings.
 	bulk_decode_u64,
-	u64, try_encode_run_u64, try_decode_run_u64
+	u64, try_encode_run_u64, try_decode_run_u64, encode_mixed_window_u64
 }
 
 /// Generates the specialized bulk codec for a signed width: zigzag
@@ -612,7 +718,7 @@ macro_rules! bulk_signed {
 	(
 		$(#[$enc_docs:meta])* $enc_name:ident,
 		$(#[$dec_docs:meta])* $dec_name:ident,
-		$it:ident, $ut:ident, $try_enc:ident, $try_dec:ident
+		$it:ident, $ut:ident, $try_enc:ident, $try_dec:ident, $mixed_enc:ident
 	) => {
 		$(#[$enc_docs])*
 		pub fn $enc_name(buf: &mut [u8], values: &[$it]) -> Result<usize> {
@@ -625,16 +731,13 @@ macro_rules! bulk_signed {
 			let mut i = 0;
 			while i < values.len() {
 				if let Some(chunk) = values.get(i..i + 8) {
+					let mut mapped = [0; 8];
+					for (z, &v) in mapped.iter_mut().zip(chunk) {
+						*z = zigzag(v);
+					}
 					// A window can only be a run if its first and
-					// last values encode at the same length; check
-					// that before paying for the full transform.
-					let z0 = zigzag(chunk[0]);
-					let z7 = zigzag(chunk[7]);
-					if z0.encoded_size() == z7.encoded_size() {
-						let mut mapped = [0; 8];
-						for (z, &v) in mapped.iter_mut().zip(chunk) {
-							*z = zigzag(v);
-						}
+					// last values encode at the same length.
+					if mapped[0].encoded_size() == mapped[7].encoded_size() {
 						if let Some(new_offset) =
 							$try_enc(buf, offset, &mapped)
 						{
@@ -643,8 +746,13 @@ macro_rules! bulk_signed {
 							continue;
 						}
 					}
-					for &value in chunk {
-						offset += value.encode(&mut buf[offset..])?;
+					if let Some(new_offset) = $mixed_enc(buf, offset, &mapped)
+					{
+						offset = new_offset;
+					} else {
+						for &value in chunk {
+							offset += value.encode(&mut buf[offset..])?;
+						}
 					}
 					i += 8;
 					continue;
@@ -707,7 +815,7 @@ bulk_signed! {
 	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
 	/// paths for runs of equal-length encodings.
 	bulk_decode_i32,
-	i32, u32, try_encode_run_u32, try_decode_run_u32
+	i32, u32, try_encode_run_u32, try_decode_run_u32, encode_mixed_window_u32
 }
 
 bulk_signed! {
@@ -724,7 +832,7 @@ bulk_signed! {
 	/// Accepts exactly the streams [`bulk_decode`] accepts, with fast
 	/// paths for runs of equal-length encodings.
 	bulk_decode_i64,
-	i64, u64, try_encode_run_u64, try_decode_run_u64
+	i64, u64, try_encode_run_u64, try_decode_run_u64, encode_mixed_window_u64
 }
 
 /// Returns an iterator that decodes consecutive values from `buf`.

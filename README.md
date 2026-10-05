@@ -179,7 +179,7 @@ streaming, no self-delimiting values — a control-stream format like
 lengths live in a separate control stream, so per-value size changes
 cost it nothing). On x86_64 its SIMD kernels (SSSE3 decode, SSE4.1
 encode; nightly-only in stream-vbyte 0.4) decoded 1,024 random-size
-`u32` values about 6x faster than vlen and encoded them about 3x
+`u32` values about 6x faster than vlen and encoded them about 2x
 faster in our measurement, while vlen stayed ahead on small values.
 vlen is built for the general case: self-delimiting streams you can
 read value by value.
